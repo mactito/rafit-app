@@ -1,7 +1,0 @@
-
-@tailwindcss base;
-@tailwindcss components;
-@tailwindcss utilities;
-body { background:#080808; color:white; font-family: 'Space Grotesk', sans-serif; }
-.anton { font-family: Anton, sans-serif; }
-.glass { background: rgba(255,255,255,0.04); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); }

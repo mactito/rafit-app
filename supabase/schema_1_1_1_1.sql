@@ -1,1 +1,0 @@
--- RAFIT SCHEMA - see previous message, full 10 tables\n-- Copy from chat or Setup DB tab\n

@@ -1,7 +1,5 @@
-
-@tailwindcss base;
-@tailwindcss components;
-@tailwindcss utilities;
-body { background:#080808; color:white; font-family: 'Space Grotesk', sans-serif; }
-.anton { font-family: Anton, sans-serif; }
-.glass { background: rgba(255,255,255,0.04); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+.anton { font-family: Impact, sans-serif; }
+.glass { background: rgba(255,255,255,0.06); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
