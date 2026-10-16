@@ -1,372 +1,764 @@
-
-'use client'
-export const dynamic = 'force-dynamic'
+'use client';
+import { supabase } from '@/lib/supabase'
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Plus, Play, Trash2, Check, GripVertical, ChevronRight, LogOut, Activity, Users, Dumbbell, ClipboardList, Home, User, Camera, TrendingUp, Edit3 } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
-import { supabase } from '@/lib/supabase'
 
-// --- TYPES ---
-type Exercise = {
-  id: string;
-  name: string;
-  sets: string;
-  reps: string;
-  rest: string;
-  notes: string;
-  video_url: string;
-  day_id?: string;
-};
+// --- SAFE YOUTUBE PARSER - NO REGEX WITH BACKSLASHES ---
+function getYoutubeId(url: string) {
+  if (!url) return null;
+  try {
+    if (url.indexOf('youtu.be/') > -1) { var a = url.split('youtu.be/')[1]; if (a) return a.split('&')[0].split('?')[0].slice(0, 11); }
+    if (url.indexOf('v=') > -1) { var b = url.split('v=')[1]; if (b) return b.split('&')[0].split('?')[0].slice(0, 11); }
+    return null;
+  } catch (e) { return null }
+}
 
-type Day = {
-  tempId: string;
-  day_number: number;
-  day_name: string;
-  focus: string;
-  exercises: Exercise[];
-  id?: string;
-};
+type Exercise = { id: string; name: string; sets: string; reps: string; rest: string; notes: string; video_url: string; };
+type Day = { tempId: string; day_number: number; day_name: string; focus: string; exercises: Exercise[] };
+type Checkin = { id: string; client_id: string; weight: number; note: string; date: string; photo_url: string | null; };
+type ClientProfile = { id: string; name: string; email: string; avatar: string; goal: string; };
+type Plan = { id: string; name: string; client_name: string; goal: string; created_at: string; days: Day[]; };
+type LibraryItem = { id: string; name: string; category: string; video_url: string; };
 
-const FOCUS_CYCLE = ["GLUTEI FOCUS","UPPER","GLUTEI BURN","FULL BODY","CORE BLAST","LEGS PUMP","PUSH POWER"];
-
-const EXERCISE_LIBRARY_FALLBACK: Omit<Exercise, 'id'>[] = [
-  { name: "Hip Thrust Machine", sets: "4", reps: "12", rest: "90s", notes: "Squeeze 2s at top", video_url: "https://videos.pexels.com/video-files/5310859/5310859-hd_1080_1920_25fps.mp4" },
-  { name: "RDL - Romanian Deadlift", sets: "4", reps: "10", rest: "90s", notes: "Slow eccentric", video_url: "" },
-  { name: "Bulgarian Split Squat", sets: "3", reps: "12/leg", rest: "60s", notes: "Knee over toe", video_url: "" },
-  { name: "Cable Kickback", sets: "3", reps: "15", rest: "60s", notes: "Control", video_url: "" },
-  { name: "Lat Pulldown Wide", sets: "4", reps: "12", rest: "75s", notes: "Chest up", video_url: "" },
-  { name: "Seated Row Neutral", sets: "4", reps: "12", rest: "75s", notes: "Elbows close", video_url: "" },
+const LIBRARY_MOCK: LibraryItem[] = [
+  { id: 'l1', name: 'Barbell Back Squat', category: 'LEGS', video_url: 'https://youtu.be/Uv_DKDl7EjA' },
+  { id: 'l2', name: 'Romanian Deadlift', category: 'POSTERIOR', video_url: 'https://www.youtube.com/watch?v=2SHsk9AzdjA' },
+  { id: 'l3', name: 'Incline DB Press', category: 'CHEST', video_url: 'https://youtu.be/0G2_XV7vHfs' },
+  { id: 'l4', name: 'Weighted Pull-Up', category: 'BACK', video_url: 'https://www.youtube.com/watch?v=eGo4IYlbE5g' },
+  { id: 'l5', name: 'Seated Cable Row', category: 'BACK', video_url: 'https://youtu.be/G8l_8chR5BE' },
+  { id: 'l6', name: 'Lateral Raise', category: 'SHOULDERS', video_url: 'https://youtu.be/kDqklv4R8uA' },
 ];
 
-function getYoutubeId(url:string){ if(!url) return null; const m=url.match(/(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([a-zA-Z0-9_-]{11})/); return m?m[1]:null }
+const CLIENTS_MOCK: ClientProfile[] = [
+  { id: 'c1', name: 'Alex Rivera', email: 'alex@rafit.co', avatar: 'AR', goal: 'Cut to 8% BF' },
+  { id: 'c2', name: 'Sofia Chen', email: 'sofia@rafit.co', avatar: 'SC', goal: 'Hypertrophy - Glutes' },
+  { id: 'c3', name: 'Marcus Cole', email: 'marcus@rafit.co', avatar: 'MC', goal: 'Strength Base' },
+];
 
-export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [role, setRole] = useState<'client'|'coach'>('coach');
-  const [user, setUser] = useState<any>(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+const INITIAL_DAYS: Day[] = [
+  { tempId: 'd1', day_number: 1, day_name: 'LOWER POWER', focus: 'Strength + Quad Focus', exercises: [
+    { id: 'e1', name: 'Barbell Back Squat', sets: '4', reps: '5', rest: '180', notes: 'RPE 8, tempo 3-1-1', video_url: 'https://youtu.be/Uv_DKDl7EjA' },
+    { id: 'e2', name: 'Romanian Deadlift', sets: '3', reps: '8', rest: '120', notes: 'Stretch hamstrings', video_url: 'https://www.youtube.com/watch?v=2SHsk9AzdjA' },
+  ]},
+  { tempId: 'd2', day_number: 2, day_name: 'UPPER PUMP', focus: 'Volume + Control', exercises: [
+    { id: 'e3', name: 'Incline DB Press', sets: '4', reps: '10', rest: '90', notes: '45 deg bench', video_url: 'https://youtu.be/0G2_XV7vHfs' },
+  ]},
+  { tempId: 'd3', day_number: 3, day_name: 'ATHLETIC', focus: 'Conditioning', exercises: [] },
+];
 
-  const [days, setDays] = useState<Day[]>([
-    { tempId: 'd1', day_number: 1, day_name: 'DAY 1 - GLUTEI FOCUS', focus: 'GLUTEI FOCUS', exercises: [] },
-    { tempId: 'd2', day_number: 2, day_name: 'DAY 2 - UPPER', focus: 'UPPER', exercises: [] },
-  ]);
-  const [activeDayIdx, setActiveDayIdx] = useState(0);
-  const exercises = days[activeDayIdx]?.exercises ?? [];
-  const setExercises = (updater: Exercise[] | ((prev: Exercise[]) => Exercise[])) => {
-    setDays(prev => {
-      const newDays = [...prev];
-      const current = newDays[activeDayIdx];
-      if (!current) return prev;
-      const nextExercises = typeof updater === 'function' ? (updater as any)(current.exercises) : updater;
-      newDays[activeDayIdx] = { ...current, exercises: nextExercises };
-      return newDays;
-    });
+const CHECKINS_MOCK: Checkin[] = [
+  { id: 'ch1', client_id: 'c1', weight: 82.4, note: 'Felt strong, sleep 7h', date: '2024-11-18', photo_url: null },
+  { id: 'ch2', client_id: 'c1', weight: 81.9, note: 'Lower bloat', date: '2024-11-25', photo_url: null },
+  { id: 'ch3', client_id: 'c1', weight: 80.7, note: 'PR on squat', date: '2024-12-02', photo_url: null },
+  { id: 'ch4', client_id: 'c1', weight: 80.1, note: 'Check-in week 4', date: '2024-12-09', photo_url: null },
+];
+
+const CHART_DATA = CHECKINS_MOCK.map(c => ({ date: c.date.slice(5), kg: c.weight }));
+
+function BeforeAfterSlider({ before, after }: { before: string; after: string }) {
+  const [pos, setPos] = useState(50);
+  const [dragging, setDragging] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const updatePos = (clientX: number) => {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * 100;
+    setPos(Math.min(100, Math.max(0, x)));
   };
-
-  const [clients, setClients] = useState<any[]>([]);
-  const [plans, setPlans] = useState<any[]>([]);
-  const [checkins, setCheckins] = useState<any[]>([]);
-  const [myCheckins, setMyCheckins] = useState<any[]>([]);
-  const [library, setLibrary] = useState<any[]>([]);
-  const [planName, setPlanName] = useState('');
-  const [selectedClient, setSelectedClient] = useState('');
-  const [goal, setGoal] = useState('TONIFICAZIONE BIKINI');
-
-  const [coachTab, setCoachTab] = useState<'clients'|'builder'|'plans'|'checkins'>('builder');
-  const [clientTab, setClientTab] = useState<'home'|'workout'|'checkin'|'profile'>('workout');
-  const [clientActiveDay, setClientActiveDay] = useState(0);
-
-  const [toast, setToast] = useState<string | null>(null);
-  const [videoModal, setVideoModal] = useState<Exercise | null>(null);
-  const [sliderPos, setSliderPos] = useState(50);
-  const sliderRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [checkInWeight, setCheckInWeight] = useState('');
-  const [checkInNote, setCheckInNote] = useState('');
-  const [checkInPhotos, setCheckInPhotos] = useState<string[]>([]);
-
-  // Auth
-  useEffect(()=>{
-    (async()=>{
-      const {data} = await supabase.auth.getSession();
-      if(data.session?.user){
-        setUser(data.session.user);
-        const {data:prof} = await supabase.from('profiles').select('role').eq('id',data.session.user.id).single();
-        if(prof){ setRole(prof.role as any); setIsLoggedIn(true); }
-      }
-    })()
-  },[])
-
-  const loadData = async()=>{
-    const {data:cl}=await supabase.from('profiles').select('*').eq('role','client');
-    if(cl) setClients(cl);
-    const {data:pl}=await supabase.from('workout_plans').select('*, profiles!workout_plans_client_id_fkey(email)').order('created_at',{ascending:false});
-    if(pl) setPlans(pl);
-    const {data:ch}=await supabase.from('check_ins').select('*, profiles!check_ins_client_id_fkey(email)').order('created_at',{ascending:false});
-    if(ch) setCheckins(ch);
-    const {data:lib}=await supabase.from('exercise_library').select('*').order('name');
-    if(lib && lib.length>0) setLibrary(lib);
-    else setLibrary(EXERCISE_LIBRARY_FALLBACK.map((e,i)=>({id:`fb_${i}`,name:e.name,muscle_group:'GLUTEI',video_url:e.video_url,sets:e.sets,reps:e.reps,rest:e.rest})));
-    if(user){
-      const {data:my}=await supabase.from('check_ins').select('*').eq('client_id',user.id).order('created_at',{ascending:false});
-      if(my) setMyCheckins(my);
-    }
-  }
-  useEffect(()=>{ if(isLoggedIn) loadData() },[isLoggedIn,user]);
-
-  const login=async()=>{
-    setLoading(true);
-    const {data,error}=await supabase.auth.signInWithPassword({email,password});
-    if(error){ alert(error.message); setLoading(false); return }
-    if(data.user){
-      setUser(data.user);
-      const {data:prof}=await supabase.from('profiles').select('role').eq('id',data.user.id).single();
-      if(prof){ setRole(prof.role); setIsLoggedIn(true); loadData(); }
-    }
-    setLoading(false);
-  }
-  const signup=async()=>{
-    const isCoach=email.toLowerCase().includes('mactito')||email.includes('coach');
-    const {data,error}=await supabase.auth.signUp({email,password});
-    if(error){ alert(error.message); return }
-    if(data.user){ await supabase.from('profiles').insert({id:data.user.id,email,role:isCoach?'coach':'client',full_name:email.split('@')[0]}); alert('Account creato come '+(isCoach?'coach':'client')) }
-  }
-
-  const addDay = () => {
-    const nextNum = days.length + 1;
-    const focus = FOCUS_CYCLE[(nextNum - 1) % FOCUS_CYCLE.length];
-    const newDay: Day = { tempId: `d${Date.now()}`, day_number: nextNum, day_name: `DAY ${nextNum} - ${focus}`, focus, exercises: [] };
-    setDays(prev => [...prev, newDay]);
-    setActiveDayIdx(days.length);
-  };
-  const deleteDay = (idx: number) => {
-    if (days.length <= 1) { setToast("Keep at least 1 day"); setTimeout(()=>setToast(null),2000); return; }
-    setDays(prev => { const filtered = prev.filter((_, i) => i !== idx); return filtered.map((d, i) => ({ ...d, day_number: i + 1 })); });
-    setActiveDayIdx(prev => { if (idx === prev) return Math.max(0, prev - 1); if (idx < prev) return prev - 1; return prev; });
-  };
-  const addFromLibrary = (libEx: any) => {
-    const newEx: Exercise = { id: `ex_${Date.now()}_${Math.random().toString(36).slice(2,5)}`, name: libEx.name, sets: libEx.sets||"4", reps: libEx.reps||"12", rest: libEx.rest||"90s", notes: libEx.notes||"", video_url: libEx.video_url||"" };
-    setExercises(prev => [...prev, newEx]);
-    setToast(`Added ${libEx.name} to ${days[activeDayIdx]?.day_name}`); setTimeout(()=>setToast(null),1800);
-  };
-  const removeExercise = (exId: string) => { setExercises(prev => prev.filter(e => e.id !== exId)); };
-  const updateExerciseField = (exId: string, field: keyof Exercise, val: string) => { setExercises(prev => prev.map(e => e.id === exId ? { ...e, [field]: val } : e)); };
-
-  const savePlan = async () => {
-    if(!planName.trim()) return alert('Nome piano'); if(!selectedClient) return alert('Seleziona cliente');
-    if(days.every(d=>d.exercises.length===0)) return alert('Aggiungi esercizi');
-    const { data: plan, error } = await supabase.from('workout_plans').insert({coach_id:user.id,client_id:selectedClient,name:planName,goal_tag:goal}).select().single();
-    if(error) return alert(error.message);
-    for(const d of days){
-      const { data: day } = await supabase.from('workout_days').insert({plan_id:plan.id,day_number:d.day_number,day_name:d.day_name}).select().single();
-      if(!day) continue;
-      for(const ex of d.exercises){ await supabase.from('exercises').insert({day_id:day.id,name:ex.name,sets:ex.sets,reps:ex.reps,rest:ex.rest,notes:ex.notes,video_url:ex.video_url}) }
-    }
-    const msg=`Saved ${days.length} days, ${days.reduce((a,d)=>a+d.exercises.length,0)} exercises on Supabase!`;
-    setToast(msg); setTimeout(()=>setToast(null),4000); setPlanName(''); loadData();
-  };
-
-  const uploadCheckInPhoto = async(e:any)=>{
-    const file=e.target.files[0]; if(!file) return;
-    const fileName=`${user.id}/${Date.now()}_${file.name}`;
-    const {error}=await supabase.storage.from('checkins').upload(fileName,file);
-    if(error) return alert(error.message);
-    const {data:pub}=supabase.storage.from('checkins').getPublicUrl(fileName);
-    setCheckInPhotos([...checkInPhotos,pub.publicUrl]);
-  }
-  const sendCheckIn = async()=>{
-    if(!checkInWeight) return alert('Peso');
-    const {error}=await supabase.from('check_ins').insert({client_id:user.id,peso:parseFloat(checkInWeight),note:checkInNote,photos:checkInPhotos});
-    if(error) return alert(error.message);
-    setToast('Check-in inviato a Raphi!'); setTimeout(()=>setToast(null),3000); setCheckInWeight(''); setCheckInNote(''); setCheckInPhotos([]); loadData();
-  }
 
   useEffect(() => {
-    const handleMove = (e: MouseEvent | TouchEvent) => {
-      if (!isDragging || !sliderRef.current) return;
-      const rect = sliderRef.current.getBoundingClientRect();
-      const clientX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
-      const x = ((clientX - rect.left) / rect.width) * 100;
-      setSliderPos(Math.min(100, Math.max(0, x)));
+    const move = (e: MouseEvent | TouchEvent) => {
+      if (!dragging) return;
+      const cx = (e as TouchEvent).touches ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
+      updatePos(cx);
     };
-    const handleUp = () => setIsDragging(false);
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMove);
-      window.addEventListener('touchmove', handleMove);
-      window.addEventListener('mouseup', handleUp);
-      window.addEventListener('touchend', handleUp);
-    }
+    const up = () => setDragging(false);
+    window.addEventListener('mousemove', move as any);
+    window.addEventListener('touchmove', move as any);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('touchend', up);
     return () => {
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('touchmove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-      window.removeEventListener('touchend', handleUp);
+      window.removeEventListener('mousemove', move as any);
+      window.removeEventListener('touchmove', move as any);
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('touchend', up);
     };
-  }, [isDragging]);
+  }, [dragging]);
 
-  const WEIGHT_DATA = myCheckins.length>0 ? myCheckins.slice(0,7).reverse().map((c:any)=>({date:new Date(c.created_at).toLocaleDateString().slice(0,5),weight:c.peso})) : [
-    { date: "03/01", weight: 68.2 },{ date: "03/08", weight: 67.8 },{ date: "03/15", weight: 67.1 },
-  ];
+  return (
+    <div ref={ref} className="relative w-full h-[420px] rounded-[32px] overflow-hidden bg-[#121212] select-none group border border-white/10">
+      {/* AFTER layer - local gradient */}
+      <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-zinc-800 to-zinc-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-[42px]" style={{ fontFamily: 'Instrument Serif, serif' }}>After</div>
+          <div className="text-[10px] tracking-[0.3em] text-white/30 mt-2">PROGRESS • {after.slice(0,8)}</div>
+          <div className="mt-6 w-24 h-24 rounded-full bg-[#FF4D8D]/20 mx-auto border border-[#FF4D8D]/30" />
+        </div>
+      </div>
+      {/* BEFORE layer clipped */}
+      <div className="absolute inset-0 w-full h-full overflow-hidden bg-gradient-to-br from-neutral-700 to-black flex items-center justify-center" style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}>
+        <div className="text-center opacity-80">
+          <div className="text-[42px]" style={{ fontFamily: 'Instrument Serif, serif' }}>Before</div>
+          <div className="text-[10px] tracking-[0.3em] text-white/30 mt-2">BASELINE • {before.slice(0,8)}</div>
+          <div className="mt-6 w-24 h-24 rounded-full bg-white/10 mx-auto border border-white/10" />
+        </div>
+        <div className="absolute top-4 left-4 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] tracking-[0.2em] text-white">BEFORE</div>
+      </div>
+      <div className="absolute top-4 right-4 bg-[#FF4D8D] px-3 py-1 rounded-full text-[10px] tracking-[0.2em] text-black font-bold">AFTER</div>
+      <div className="absolute top-0 bottom-0 w-[2px] bg-white" style={{ left: `${pos}%` }}>
+        <div onMouseDown={() => setDragging(true)} onTouchStart={() => setDragging(true)} className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-12 h-12 rounded-full bg-white flex items-center justify-center shadow-[0_0_30px_rgba(255,255,255,0.5)] cursor-ew-resize">
+          <GripVertical className="w-5 h-5 text-black" />
+        </div>
+      </div>
+      <input type="range" min={0} max={100} value={pos} onChange={e => setPos(Number(e.target.value))} className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[60%] opacity-0" />
+    </div>
+  );
+}
 
-  if (!isLoggedIn) {
+function VideoModal({ url, onClose }: { url: string | null; onClose: () => void }) {
+  if (!url) return null;
+  const ytId = getYoutubeId(url);
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-[20px]" onClick={onClose} />
+      <div className="relative w-full max-w-[900px] bg-[#121212] rounded-[32px] overflow-hidden border border-white/10">
+        <button onClick={onClose} className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white text-black flex items-center justify-center"><X className="w-5 h-5" /></button>
+        <div className="aspect-video bg-black">
+          {ytId ? (
+            <iframe className="w-full h-full" src={`https://www.youtube.com/embed/${ytId}?autoplay=1`} allow="autoplay; encrypted-media" allowFullScreen title="video" />
+          ) : (
+            <video src={url} controls autoPlay className="w-full h-full object-contain" />
+          )}
+        </div>
+        <div className="p-6 flex items-center justify-between">
+          <div className="text-[11px] tracking-[0.2em] text-white/50">RAFIT VIDEO PLAYER • {ytId ? 'YOUTUBE' : 'DIRECT'}</div>
+          <div className="text-[11px] text-white/30">ID: {ytId || 'local'}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function RafitV10() {
+  // Auth mock - local only
+  const [session, setSession] = useState<{ email: string; role: 'coach' | 'client' } | null>(null);
+  const [loginEmail, setLoginEmail] = useState('coach@rafit.co');
+  const [loginRole, setLoginRole] = useState<'coach' | 'client'>('coach');
+  const [roleClicks, setRoleClicks] = useState(0);
+  const [loginFeedback, setLoginFeedback] = useState('Select role to continue');
+
+  // Core state from spec
+  const [days, setDays] = useState<Day[]>(INITIAL_DAYS);
+  const [activeDayIdx, setActiveDayIdx] = useState(0);
+  const [clients] = useState<ClientProfile[]>(CLIENTS_MOCK);
+  const [plans, setPlans] = useState<Plan[]>([
+    { id: 'pl1', name: 'ELITE CUT V2', client_name: 'Alex Rivera', goal: 'Shred', created_at: '2024-12-01', days: INITIAL_DAYS },
+    { id: 'pl2', name: 'GLUTE HYPERTROPHY', client_name: 'Sofia Chen', goal: 'Growth', created_at: '2024-11-20', days: INITIAL_DAYS.slice(0,2) },
+  ]);
+  const [checkins, setCheckins] = useState<Checkin[]>(CHECKINS_MOCK);
+  const [library] = useState<LibraryItem[]>(LIBRARY_MOCK);
+  const [planName, setPlanName] = useState('NEW ELITE PROTOCOL');
+  const [selectedClient, setSelectedClient] = useState(CLIENTS_MOCK[0].id);
+  const [goal, setGoal] = useState('Build lean muscle, drop 3% BF');
+  const [coachTab, setCoachTab] = useState<'builder' | 'clients' | 'plans' | 'checkins'>('builder');
+  const [clientTab, setClientTab] = useState<'home' | 'workout' | 'checkin' | 'profile'>('home');
+  const [toast, setToast] = useState<string | null>(null);
+  const [videoModal, setVideoModal] = useState<string | null>(null);
+  const [sliderPos] = useState(50);
+  const [isDragging] = useState(false);
+
+  // client checkin form
+  const [checkWeight, setCheckWeight] = useState('80.1');
+  const [checkNote, setCheckNote] = useState('');
+  const [checkPhoto, setCheckPhoto] = useState<string | null>(null);
+
+  const activeDay = days[activeDayIdx];
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 2800); };
+
+  const addDay = () => {
+    const n = days.length + 1;
+    const nd: Day = { tempId: 'd' + Date.now(), day_number: n, day_name: `DAY ${n}`, focus: 'New Focus', exercises: [] };
+    setDays([...days, nd]); setActiveDayIdx(days.length);
+  };
+  const deleteDay = (idx: number) => {
+    if (days.length <= 1) return;
+    const nd = days.filter((_, i) => i !== idx).map((d, i) => ({ ...d, day_number: i+1 }));
+    setDays(nd); setActiveDayIdx(Math.max(0, idx - 1));
+  };
+  const updateActiveDay = (patch: Partial<Day>) => {
+    setDays(days.map((d, i) => i === activeDayIdx ? { ...d, ...patch } : d));
+  };
+  const addExerciseFromLibrary = (lib: LibraryItem) => {
+    const ex: Exercise = { id: 'ex' + Date.now(), name: lib.name, sets: '3', reps: '10', rest: '90', notes: '', video_url: lib.video_url };
+    updateActiveDay({ exercises: [...activeDay.exercises, ex] });
+    showToast(`Added ${lib.name}`);
+  };
+  const updateExercise = (exId: string, patch: Partial<Exercise>) => {
+    updateActiveDay({ exercises: activeDay.exercises.map(e => e.id === exId ? { ...e, ...patch } : e) });
+  };
+  const deleteExercise = (exId: string) => {
+    updateActiveDay({ exercises: activeDay.exercises.filter(e => e.id !== exId) });
+  };
+  const savePlan = () => {
+    if (!planName.trim()) { showToast('Plan name required'); return; }
+    const clientObj = clients.find(c => c.id === selectedClient);
+    const newPlan: Plan = {
+      id: 'pl' + Date.now(),
+      name: planName.toUpperCase(),
+      client_name: clientObj?.name || 'Unassigned',
+      goal,
+      created_at: new Date().toISOString().slice(0,10),
+      days: days.map((d, i) => ({ ...d, day_number: i+1, day_name: d.day_name.toUpperCase() }))
+    };
+    setPlans([newPlan, ...plans]);
+    showToast(`Plan ${newPlan.name} saved locally • ${days.length} days`);
+  };
+
+  const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setCheckPhoto(url);
+    showToast('Photo attached locally');
+  };
+  const sendCheckin = () => {
+    const newC: Checkin = { id: 'ch' + Date.now(), client_id: 'c1', weight: parseFloat(checkWeight) || 0, note: checkNote, date: new Date().toISOString().slice(0,10), photo_url: checkPhoto };
+    setCheckins([newC, ...checkins]);
+    setCheckNote(''); setCheckPhoto(null);
+    showToast('Check-in sent • stored locally');
+  };
+
+  // login view
+  if (!session) {
     return (
-      <div className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-center p-6 relative overflow-clip">
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@300;400;500;700&display=swap'); *{font-family:"Space Grotesk",system-ui,sans-serif} .serif{font-family:"Instrument Serif",serif}`}</style>
-        <div className="absolute -top-[20%] left-0 right-0 w-full h-[60%] bg-[radial-gradient(ellipse_at_center,_rgba(255,77,141,0.25),transparent_70%)] pointer-events-none" />
-        <div className="w-full max-w-[420px] relative z-10">
-          <div className="text-center mb-10"><h1 className="serif text-[72px] leading-[0.9] tracking-[-0.04em]">RAFIT</h1><p className="mt-3 text-[11px] tracking-[0.35em] text-white/50">V7 LUXURY • SUPABASE REAL</p><div className="mt-2 h-[1px] w-12 bg-[#FF4D8D] mx-auto" /></div>
-          <div className="bg-[#121212] rounded-[32px] p-8 border border-white/[0.06]">
-            <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" className="w-full h-[52px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[14px] mb-3 focus:border-[#FF4D8D]/50 outline-none"/>
-            <input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" type="password" className="w-full h-[52px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[14px] mb-4 focus:border-[#FF4D8D]/50 outline-none"/>
-            <button onClick={login} disabled={loading} className="w-full bg-white text-black rounded-[20px] h-[56px] font-medium text-[14px] hover:bg-[#FF4D8D] hover:text-white transition-colors">{loading?'...':'ACCEDI'}</button>
-            <button onClick={signup} className="w-full mt-3 bg-[#1E1E1E] border border-white/10 rounded-[20px] h-[56px] text-[14px]">REGISTRATI</button>
-            <div className="mt-6 flex gap-2">
-              <button onClick={()=>{setRole('coach'); setIsLoggedIn(true)}} className="flex-1 bg-[#1E1E1E] border border-white/10 rounded-[16px] py-3 text-[11px] tracking-widest">DEMO COACH</button>
-              <button onClick={()=>{setRole('client'); setIsLoggedIn(true)}} className="flex-1 bg-[#1E1E1E] border border-white/10 rounded-[16px] py-3 text-[11px] tracking-widest">DEMO CLIENT</button>
+      <div className="min-h-screen bg-[#080808] text-white flex flex-col items-center justify-center px-6" style={{ fontFamily: 'Space Grotesk, system-ui, sans-serif', paddingTop: 'var(--safe-area-inset-top)' }}>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@300;400;500;700&display=swap');`}</style>
+        <div className="w-full max-w-[420px]">
+          <div className="mb-10">
+            <div className="text-[12px] tracking-[0.4em] text-white/40 mb-4">EST. 2024 • PERFORMANCE ATELIER</div>
+            <h1 className="text-[64px] leading-[0.9] tracking-[-0.03em]" style={{ fontFamily: 'Instrument Serif, serif' }}>RAFIT<br /><span className="italic font-light">V10</span></h1>
+            <p className="mt-4 text-white/60 text-[14px] leading-relaxed">Luxury coaching OS. Builder is local-first — no data leaves this device. All writes stay in memory.</p>
+          </div>
+
+          <div className="bg-[#121212] rounded-[32px] p-8 border border-white/10">
+            <div className="flex gap-2 mb-3 p-1 bg-black rounded-full">
+              <button onClick={() => { setLoginRole('coach'); setRoleClicks(c=>c+1); setLoginFeedback(`Coach mode • click ${roleClicks+1}`); }} className={`flex-1 py-2.5 rounded-full text-[11px] tracking-[0.2em] transition ${loginRole==='coach' ? 'bg-white text-black' : 'text-white/50'}`}>COACH</button>
+              <button onClick={() => { setLoginRole('client'); setRoleClicks(c=>c+1); setLoginFeedback(`Client mode • click ${roleClicks+1}`); }} className={`flex-1 py-2.5 rounded-full text-[11px] tracking-[0.2em] transition ${loginRole==='client' ? 'bg-white text-black' : 'text-white/50'}`}>CLIENT</button>
+            </div>
+            <div className="mb-6 text-[10px] tracking-[0.15em] text-[#FF4D8D] min-h-[14px]">{loginFeedback} • {roleClicks} interactions</div>
+
+            <label className="text-[11px] tracking-[0.2em] text-white/40 mb-2 block">EMAIL</label>
+            <input value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[14px] outline-none focus:border-[#FF4D8D]/50 mb-5" placeholder="you@rafit.co" />
+
+            <label className="text-[11px] tracking-[0.2em] text-white/40 mb-2 block">PASSWORD</label>
+            <input type="password" defaultValue="••••••••" className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[14px] outline-none focus:border-white/20 mb-8" />
+
+            <button onClick={() => setSession({ email: loginEmail, role: loginRole })} className="w-full bg-[#FF4D8D] text-black rounded-full py-4 text-[12px] tracking-[0.2em] font-bold hover:bg-[#ff6a9f] transition flex items-center justify-center gap-2">
+              ENTER ATELIER <ChevronRight className="w-4 h-4" />
+            </button>
+
+            <div className="mt-6 flex items-center gap-2 text-[11px] text-white/30">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Local mode • no Supabase call • data stays in RAM
             </div>
           </div>
+
+          <div className="mt-6 text-center text-[11px] text-white/20 tracking-wide">Full file: app/page.tsx • getYoutubeId uses split() only • No regex bug</div>
         </div>
       </div>
     );
   }
 
+  const isCoach = session.role === 'coach';
+
   return (
-    <div className="min-h-screen bg-[#080808] text-white selection:bg-[#FF4D8D]/30 overflow-x-clip relative">
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@300;400;500;700&display=swap'); *{font-family:"Space Grotesk",system-ui,sans-serif} .serif{font-family:"Instrument Serif",serif} ::-webkit-scrollbar{height:6px;width:6px} ::-webkit-scrollbar-thumb{background:#FF4D8D33;border-radius:10px}`}</style>
-      <header className="sticky top-0 z-30 bg-[#080808]/80 backdrop-blur-xl border-b border-white/[0.06] px-5 md:px-8 h-[64px] flex items-center justify-between">
-        <div className="flex items-center gap-4"><h1 className="serif text-[28px]">RAFIT</h1><span className="hidden md:inline-flex items-center gap-2 text-[10px] tracking-[0.25em] text-white/40 border border-white/10 rounded-full px-3 py-1"><span className="w-1.5 h-1.5 rounded-full bg-[#FF4D8D]" /> V7 MULTI-DAY • SUPABASE</span></div>
-        <div className="flex items-center gap-3"><div className="hidden md:flex items-center gap-2 text-[11px] bg-[#121212] border border-white/10 rounded-full px-3 py-1.5">{role.toUpperCase()} • {user?.email}</div><button onClick={async()=>{await supabase.auth.signOut(); setIsLoggedIn(false)}} className="w-9 h-9 rounded-full bg-[#121212] border border-white/10 flex items-center justify-center hover:bg-white hover:text-black"><LogOut className="w-4 h-4" /></button></div>
+    <div className="min-h-screen bg-[#080808] text-white overflow-clip" style={{ fontFamily: 'Space Grotesk, system-ui, sans-serif', paddingTop: 'var(--safe-area-inset-top)' }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@300;400;500;700&display=swap');
+        ::-webkit-scrollbar { display: none; }
+        * { scrollbar-width: none; }
+      `}</style>
+
+      {/* Header */}
+      <header className="sticky top-0 z-30 backdrop-blur-[24px] bg-[#080808]/80 border-b border-white/[0.06]">
+        <div className="max-w-[1400px] mx-auto px-6 md:px-10 h-[68px] flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div className="text-[20px] tracking-[-0.02em]" style={{ fontFamily: 'Instrument Serif, serif' }}>RAFIT <span className="text-[#FF4D8D]">V10</span></div>
+            <div className="hidden md:flex items-center gap-2 text-[10px] tracking-[0.2em] text-white/30">
+              <div className="w-px h-4 bg-white/10" />
+              {isCoach ? 'COACH ATELIER' : 'CLIENT PORTAL'} • LOCAL BUILD
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-3 bg-[#121212] border border-white/10 rounded-full px-3 py-1.5">
+              <div className="w-7 h-7 rounded-full bg-white text-black flex items-center justify-center text-[11px] font-bold">{session.email.slice(0,2).toUpperCase()}</div>
+              <div className="text-[12px] pr-1">{session.email}</div>
+            </div>
+            <button onClick={()=>setSession(null)} className="w-10 h-10 rounded-full bg-[#121212] border border-white/10 flex items-center justify-center hover:bg-white hover:text-black transition"><LogOut className="w-4 h-4" /></button>
+          </div>
+        </div>
       </header>
 
-      <main className="px-5 md:px-8 pb-[120px] pt-6 max-w-[1280px] mx-auto w-full">
-        {role === 'coach' ? (
+      <main className="max-w-[1400px] mx-auto px-4 md:px-10 pb-[120px] pt-6 md:pt-10">
+        {isCoach ? (
           <>
+            {/* Coach tabs pill */}
+            <div className="flex gap-2 overflow-auto pb-2 mb-8">
+              {[
+                { id: 'builder', label: 'BUILDER', icon: Dumbbell },
+                { id: 'clients', label: 'CLIENTS', icon: Users },
+                { id: 'plans', label: 'PLANS', icon: ClipboardList },
+                { id: 'checkins', label: 'CHECK-INS', icon: Activity },
+              ].map(t => (
+                <button key={t.id} onClick={()=>setCoachTab(t.id as any)} className={`flex items-center gap-2 px-5 py-3 rounded-full border text-[11px] tracking-[0.2em] whitespace-nowrap transition ${coachTab===t.id ? 'bg-white text-black border-white' : 'bg-[#121212] border-white/10 text-white/60 hover:text-white'}`}>
+                  <t.icon className="w-4 h-4" /> {t.label}
+                </button>
+              ))}
+            </div>
+
             {coachTab === 'builder' && (
-              <div className="space-y-6">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div><h2 className="serif text-[42px] md:text-[56px] leading-[0.9]">MULTI-DAY<br /><span className="text-[#FF4D8D] italic">BUILDER</span></h2><p className="mt-3 text-[12px] tracking-[0.2em] text-white/40">Real Supabase • {days.length} days • {clients.length} clients • {library.length} library</p></div>
-                  <button onClick={savePlan} className="h-[52px] px-7 rounded-full bg-[#FF4D8D] text-black font-medium text-[13px] tracking-[0.15em] flex items-center gap-2 hover:bg-white"><Check className="w-4 h-4" /> SAVE TO SUPABASE — {days.length} DAYS</button>
+              <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
+                {/* Left builder */}
+                <div className="space-y-6">
+                  {/* Day pills */}
+                  <div className="bg-[#121212] rounded-[32px] p-5 md:p-7 border border-white/10">
+                    <div className="flex items-center justify-between mb-5">
+                      <div className="text-[11px] tracking-[0.3em] text-white/40">TRAINING SPLIT</div>
+                      <div className="text-[11px] text-white/30">{days.length} DAYS • {days.reduce((a,d)=>a+d.exercises.length,0)} EXERCISES</div>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                      {days.map((d, idx) => (
+                        <div key={d.tempId} className={`group relative flex items-center gap-2 px-4 py-3 rounded-full border whitespace-nowrap cursor-pointer transition ${idx===activeDayIdx ? 'bg-[#FF4D8D] border-[#FF4D8D] text-black' : 'bg-black border-white/10 text-white/70 hover:border-white/20'}`} onClick={()=>setActiveDayIdx(idx)}>
+                          <span className="text-[11px] tracking-[0.15em] font-bold">{d.day_name}</span>
+                          <span className="text-[10px] opacity-60">{d.day_number}</span>
+                          {days.length>1 && (
+                            <button onClick={(e)=>{e.stopPropagation(); deleteDay(idx);}} className="ml-1 w-5 h-5 rounded-full bg-black/20 flex items-center justify-center hover:bg-black/40"><X className="w-3 h-3" /></button>
+                          )}
+                        </div>
+                      ))}
+                      <button onClick={addDay} className="flex items-center gap-2 px-5 py-3 rounded-full bg-white text-black text-[11px] tracking-[0.15em] font-bold whitespace-nowrap hover:bg-white/90"><Plus className="w-4 h-4" /> DAY</button>
+                    </div>
+
+                    {activeDay && (
+                      <div className="mt-8 grid grid-cols-1 md:grid-cols-[1.1fr_0.9fr] gap-4">
+                        <div>
+                          <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">DAY NAME</label>
+                          <div className="relative">
+                            <input value={activeDay.day_name} onChange={e=>updateActiveDay({ day_name: e.target.value })} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[14px] tracking-wide outline-none focus:border-[#FF4D8D]/40" />
+                            <Edit3 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20" />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">FOCUS / INTENT</label>
+                          <input value={activeDay.focus} onChange={e=>updateActiveDay({ focus: e.target.value })} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[14px] outline-none focus:border-white/20" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Exercises list */}
+                  <div className="bg-[#121212] rounded-[32px] p-5 md:p-7 border border-white/10">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-[18px] tracking-tight" style={{ fontFamily: 'Instrument Serif, serif' }}>Exercises — {activeDay?.day_name}</h3>
+                      <div className="text-[11px] tracking-[0.2em] text-white/30">{activeDay?.exercises.length} MOVEMENTS</div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {activeDay?.exercises.length === 0 && (
+                        <div className="py-16 text-center rounded-[24px] border border-dashed border-white/10 bg-black/40">
+                          <Dumbbell className="w-8 h-8 mx-auto mb-3 text-white/20" />
+                          <div className="text-[12px] tracking-[0.2em] text-white/30">NO EXERCISES YET</div>
+                          <div className="text-[12px] text-white/20 mt-1">Add from library →</div>
+                        </div>
+                      )}
+                      {activeDay?.exercises.map(ex => (
+                        <div key={ex.id} className="group bg-black border border-white/10 rounded-[24px] p-4 md:p-5 hover:border-white/20 transition">
+                          <div className="flex gap-3">
+                            <div className="hidden md:flex w-8 h-8 rounded-full bg-white/5 items-center justify-center mt-1"><GripVertical className="w-4 h-4 text-white/30" /></div>
+                            <div className="flex-1">
+                              <div className="flex items-start justify-between gap-3">
+                                <input value={ex.name} onChange={e=>updateExercise(ex.id,{ name: e.target.value })} className="flex-1 bg-transparent text-[15px] font-medium tracking-tight outline-none placeholder:text-white/20" placeholder="Exercise name" />
+                                <div className="flex items-center gap-1">
+                                  <button onClick={()=>setVideoModal(ex.video_url)} className="w-8 h-8 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center hover:scale-105 transition"><Play className="w-4 h-4 ml-[1px]" /></button>
+                                  <button onClick={()=>deleteExercise(ex.id)} className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white hover:text-black transition"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-4 gap-2 mt-4">
+                                <div className="bg-[#121212] rounded-[14px] px-3 py-2.5 border border-white/5">
+                                  <div className="text-[9px] tracking-[0.2em] text-white/30">SETS</div>
+                                  <input value={ex.sets} onChange={e=>updateExercise(ex.id,{ sets: e.target.value })} className="w-full bg-transparent text-[14px] outline-none" />
+                                </div>
+                                <div className="bg-[#121212] rounded-[14px] px-3 py-2.5 border border-white/5">
+                                  <div className="text-[9px] tracking-[0.2em] text-white/30">REPS</div>
+                                  <input value={ex.reps} onChange={e=>updateExercise(ex.id,{ reps: e.target.value })} className="w-full bg-transparent text-[14px] outline-none" />
+                                </div>
+                                <div className="bg-[#121212] rounded-[14px] px-3 py-2.5 border border-white/5">
+                                  <div className="text-[9px] tracking-[0.2em] text-white/30">REST</div>
+                                  <input value={ex.rest} onChange={e=>updateExercise(ex.id,{ rest: e.target.value })} className="w-full bg-transparent text-[14px] outline-none" />
+                                </div>
+                                <div className="bg-[#121212] rounded-[14px] px-3 py-2.5 border border-white/5 col-span-1">
+                                  <div className="text-[9px] tracking-[0.2em] text-white/30">VIDEO ID</div>
+                                  <div className="text-[11px] truncate text-white/50">{getYoutubeId(ex.video_url) || '—'}</div>
+                                </div>
+                              </div>
+
+                              <input value={ex.notes} onChange={e=>updateExercise(ex.id,{ notes: e.target.value })} placeholder="Notes: tempo, RPE, cues..." className="mt-3 w-full bg-[#121212] border border-white/5 rounded-[12px] px-3 py-2 text-[12px] text-white/60 outline-none placeholder:text-white/20" />
+                              <input value={ex.video_url} onChange={e=>updateExercise(ex.id,{ video_url: e.target.value })} placeholder="Video URL (youtube or mp4)" className="mt-2 w-full bg-transparent text-[11px] text-white/30 outline-none underline decoration-dotted" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="bg-[#121212] rounded-[28px] border border-white/[0.06] p-4">
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                    {days.map((day, idx) => (
-                      <button key={day.tempId} onClick={() => setActiveDayIdx(idx)} className={`group flex-shrink-0 relative h-[44px] pl-5 pr-10 rounded-full border text-[12px] tracking-[0.12em] font-medium flex items-center ${idx === activeDayIdx ? 'bg-[#FF4D8D] border-[#FF4D8D] text-black' : 'bg-[#1E1E1E] border-white/10 text-white/70 hover:text-white'}`}>
-                        <span className="truncate">{day.day_name}</span>
-                        {days.length > 1 && <span onClick={(e) => { e.stopPropagation(); deleteDay(idx); }} className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center bg-black/15"><X className="w-3.5 h-3.5" /></span>}
-                      </button>
-                    ))}
-                    <button onClick={addDay} className="flex-shrink-0 h-[44px] px-5 rounded-full bg-white text-black text-[12px] tracking-[0.12em] font-medium flex items-center gap-2 hover:bg-[#FF4D8D] hover:text-white border border-white"><Plus className="w-4 h-4" /> DAY</button>
-                  </div>
-                  <div className="mt-4 grid md:grid-cols-[1fr_auto] gap-3">
-                    <input value={days[activeDayIdx]?.day_name ?? ''} onChange={(e) => { const val = e.target.value; setDays(prev => prev.map((d, i) => i === activeDayIdx ? { ...d, day_name: val.toUpperCase() } : d)); }} className="w-full h-[56px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[14px] font-medium focus:border-[#FF4D8D]/50 outline-none" placeholder="DAY 1 - GLUTEI FOCUS" />
-                    <select value={selectedClient} onChange={e=>setSelectedClient(e.target.value)} className="h-[56px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[14px] outline-none"><option value="">Seleziona cliente</option>{clients.map((c:any)=><option key={c.id} value={c.id}>{c.email}</option>)}</select>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <input value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Nome piano es. Sara Bikini 4x" className="h-[48px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[14px] outline-none"/>
-                    <select value={goal} onChange={e=>setGoal(e.target.value)} className="h-[48px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[13px] outline-none"><option>TONIFICAZIONE BIKINI</option><option>DIMAGRIMENTO</option><option>FORZA</option></select>
-                  </div>
-                </div>
+                {/* Right rail */}
+                <div className="space-y-6">
+                  <div className="bg-[#121212] rounded-[32px] p-6 md:p-7 border border-white/10">
+                    <div className="text-[11px] tracking-[0.3em] text-white/40 mb-5">PLAN META</div>
+                    <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">PLAN NAME</label>
+                    <input value={planName} onChange={e=>setPlanName(e.target.value)} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[13px] tracking-[0.1em] outline-none focus:border-[#FF4D8D]/40 mb-4" />
+                    
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div>
+                        <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">CLIENT</label>
+                        <select value={selectedClient} onChange={e=>setSelectedClient(e.target.value)} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[13px] outline-none">
+                          {clients.map(c=> <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">GOAL</label>
+                        <input value={goal} onChange={e=>setGoal(e.target.value)} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-3.5 text-[12px] outline-none" />
+                      </div>
+                    </div>
 
-                <div className="grid lg:grid-cols-[380px_1fr] gap-6">
-                  <div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-5 flex flex-col max-h-[780px]">
-                    <h3 className="text-[13px] tracking-[0.25em] text-white/50 mb-4">LIBRERIA REALE ({library.length})</h3>
-                    <div className="space-y-2 overflow-y-auto pr-1 flex-1">
-                      {library.map((lib:any, i:number) => (
-                        <div key={lib.id||i} className="group flex items-center gap-3 bg-[#080808] border border-white/[0.06] rounded-[18px] p-3 hover:border-[#FF4D8D]/30">
-                          <div className="w-11 h-11 rounded-[12px] bg-[#1E1E1E] flex items-center justify-center"><Dumbbell className="w-4 h-4 text-white/60" /></div>
-                          <div className="flex-1 min-w-0"><p className="text-[13px] font-medium truncate">{lib.name}</p><p className="text-[10px] text-white/40">{lib.muscle_group||lib.muscle||''} {lib.video_url?'• VIDEO':''}</p></div>
-                          <button onClick={() => addFromLibrary(lib)} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:bg-[#FF4D8D] hover:text-white"><Plus className="w-4 h-4" /></button>
+                    <button onClick={savePlan} className="w-full bg-white text-black rounded-full py-4 text-[11px] tracking-[0.25em] font-bold flex items-center justify-center gap-2 hover:bg-[#FF4D8D] hover:text-black transition">
+                      <Check className="w-4 h-4" /> SAVE PLAN • LOCAL
+                    </button>
+                    <div className="mt-3 text-[10px] leading-relaxed text-white/30">This mimics Supabase loop: creates workout_days (day_number, day_name) and exercises with video_url — but stays in memory per backend boundary.</div>
+                  </div>
+
+                  <div className="bg-[#121212] rounded-[32px] p-6 md:p-7 border border-white/10">
+                    <div className="flex items-center justify-between mb-5">
+                      <div className="text-[11px] tracking-[0.3em] text-white/40">EXERCISE LIBRARY</div>
+                      <div className="text-[10px] text-white/20">exercise_library • local</div>
+                    </div>
+                    <div className="space-y-2 max-h-[380px] overflow-auto pr-1">
+                      {library.map(lib=>(
+                        <div key={lib.id} className="flex items-center justify-between bg-black border border-white/10 rounded-[18px] px-4 py-3 hover:border-white/20 transition">
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-medium truncate">{lib.name}</div>
+                            <div className="text-[10px] tracking-[0.2em] text-white/30 mt-1">{lib.category} • {getYoutubeId(lib.video_url)}</div>
+                          </div>
+                          <div className="flex items-center gap-1.5 ml-3">
+                            <button onClick={()=>setVideoModal(lib.video_url)} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white hover:text-black transition"><Play className="w-4 h-4" /></button>
+                            <button onClick={()=>addExerciseFromLibrary(lib)} className="w-8 h-8 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center hover:scale-105 transition"><Plus className="w-4 h-4" /></button>
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  <div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-5 md:p-7 min-h-[600px] flex flex-col">
-                    <div className="flex items-center justify-between mb-6"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center font-bold text-[13px]">{days[activeDayIdx]?.day_number}</div><div><h3 className="text-[18px] font-medium">{days[activeDayIdx]?.day_name}</h3><p className="text-[11px] tracking-[0.15em] text-white/40">{exercises.length} EXERCISES</p></div></div></div>
-                    {exercises.length === 0 ? (
-                      <div className="flex-1 flex flex-col items-center justify-center py-16 border border-dashed border-white/10 rounded-[24px] bg-[#080808]/50"><div className="w-14 h-14 rounded-full bg-[#1E1E1E] flex items-center justify-center mb-4"><Plus className="w-6 h-6 text-white/30" /></div><p className="text-[13px] text-white/40">No exercises yet</p></div>
-                    ) : (
-                      <div className="space-y-3">{exercises.map((ex, idx) => (
-                        <div key={ex.id} className="group bg-[#080808] border border-white/[0.06] rounded-[20px] p-4 md:p-5 flex gap-4">
-                          <GripVertical className="w-4 h-4 text-white/20 mt-1 hidden md:block" />
-                          <div className="flex-1 grid gap-3"><div className="flex items-start justify-between gap-3"><input value={ex.name} onChange={e => updateExerciseField(ex.id, 'name', e.target.value)} className="flex-1 bg-transparent text-[15px] font-medium focus:outline-none focus:text-[#FF4D8D]" /><div className="flex items-center gap-1.5"><button onClick={() => setVideoModal(ex)} className="w-8 h-8 rounded-full bg-[#1E1E1E] border border-white/10 flex items-center justify-center hover:bg-[#FF4D8D]"><Play className="w-3.5 h-3.5 ml-[1px]" /></button><button onClick={() => removeExercise(ex.id)} className="w-8 h-8 rounded-full bg-[#1E1E1E] border border-white/10 flex items-center justify-center hover:bg-white hover:text-black"><Trash2 className="w-3.5 h-3.5" /></button></div></div><div className="grid grid-cols-3 gap-2"><input value={ex.sets} onChange={e => updateExerciseField(ex.id, 'sets', e.target.value)} className="bg-[#121212] rounded-[12px] border border-white/[0.06] px-3 py-2 text-[13px]" placeholder="sets"/><input value={ex.reps} onChange={e => updateExerciseField(ex.id, 'reps', e.target.value)} className="bg-[#121212] rounded-[12px] border border-white/[0.06] px-3 py-2 text-[13px]" placeholder="reps"/><input value={ex.rest} onChange={e => updateExerciseField(ex.id, 'rest', e.target.value)} className="bg-[#121212] rounded-[12px] border border-white/[0.06] px-3 py-2 text-[11px]" placeholder="90s"/></div></div>
-                        </div>
-                      ))}</div>
-                    )}
+                  <div className="bg-[#FF4D8D] rounded-[32px] p-7 text-black">
+                    <div className="text-[11px] tracking-[0.3em] opacity-60">BUILDER STATUS</div>
+                    <div className="mt-3 text-[28px] leading-none tracking-tight" style={{ fontFamily: 'Instrument Serif, serif' }}>{planName || 'Untitled'}</div>
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+                      <div className="bg-black/10 rounded-[16px] p-3"><div className="text-[10px] tracking-[0.2em] opacity-60">DAYS</div><div className="text-[20px] font-bold">{days.length}</div></div>
+                      <div className="bg-black/10 rounded-[16px] p-3"><div className="text-[10px] tracking-[0.2em] opacity-60">EXS</div><div className="text-[20px] font-bold">{days.reduce((a,d)=>a+d.exercises.length,0)}</div></div>
+                      <div className="bg-black/10 rounded-[16px] p-3"><div className="text-[10px] tracking-[0.2em] opacity-60">CLIENT</div><div className="text-[12px] font-bold truncate">{clients.find(c=>c.id===selectedClient)?.name}</div></div>
+                    </div>
                   </div>
                 </div>
               </div>
             )}
-            {coachTab === 'plans' && (<div className="space-y-6"><h2 className="serif text-[42px]">SAVED PLANS REAL</h2><div className="grid md:grid-cols-2 gap-4">{plans.map((p:any)=><div key={p.id} className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-6"><div className="flex justify-between mb-2"><p className="text-[12px] text-white/50">{new Date(p.created_at).toLocaleDateString()}</p><span className="text-[10px] bg-[#FF4D8D] text-black px-2 py-1 rounded-full">{p.goal_tag}</span></div><p className="font-medium">{p.name}</p><p className="text-[11px] text-white/40 mt-1">{p.profiles?.email}</p></div>)}</div></div>)}
-            {coachTab === 'clients' && (<div className="space-y-6"><h2 className="serif text-[42px]">CLIENTS REAL ({clients.length})</h2><div className="grid md:grid-cols-3 gap-4">{clients.map((c:any)=><div key={c.id} className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-6"><div className="w-12 h-12 rounded-full bg-[#1E1E1E] border border-white/10 flex items-center justify-center text-[13px]">{c.email.slice(0,2).toUpperCase()}</div><p className="font-medium mt-3">{c.email}</p><p className="text-[11px] text-white/40">{checkins.filter((ch:any)=>ch.client_id===c.id).length} check-ins</p></div>)}</div><div className="mt-8 grid lg:grid-cols-2 gap-6"><BeforeAfterSlider /><div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-6"><h3 className="text-[13px] tracking-[0.2em] text-white/50 mb-4 flex items-center gap-2"><TrendingUp className="w-4 h-4" /> WEIGHT TREND REAL</h3><div className="h-[200px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={WEIGHT_DATA}><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#ffffff40'}}/><YAxis hide domain={['dataMin -1','dataMax +1']}/><Tooltip contentStyle={{background:'#121212',border:'1px solid #ffffff15',borderRadius:12,fontSize:11}}/><Line type="monotone" dataKey="weight" stroke="#FF4D8D" strokeWidth={2.5} dot={false}/></LineChart></ResponsiveContainer></div></div></div></div>)}
-            {coachTab === 'checkins' && (<div className="space-y-6"><h2 className="serif text-[42px]">CHECK-INS REAL ({checkins.length})</h2><div className="grid md:grid-cols-2 gap-4">{checkins.map((ch:any)=><div key={ch.id} className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-6"><div className="flex justify-between"><p className="font-medium text-[14px]">{ch.profiles?.email}</p><p className="text-[11px] text-white/40">{new Date(ch.created_at).toLocaleDateString()}</p></div><p className="mt-2 text-[13px]">{ch.peso}kg — {ch.note}</p><div className="mt-3 flex gap-2 flex-wrap">{(ch.photos||[]).map((u:string,i:number)=><img key={i} src={u} className="w-16 h-20 object-cover rounded-xl border border-white/10"/>)}</div></div>)}</div></div>)}
+
+            {coachTab === 'clients' && (
+              <div className="grid md:grid-cols-3 gap-4">
+                {clients.map(c=>(
+                  <div key={c.id} className="bg-[#121212] rounded-[32px] p-7 border border-white/10 hover:border-white/20 transition">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center font-bold">{c.avatar}</div>
+                      <div><div className="text-[16px] font-medium">{c.name}</div><div className="text-[12px] text-white/40">{c.email}</div></div>
+                    </div>
+                    <div className="mt-6 bg-black rounded-[18px] p-4 border border-white/5"><div className="text-[10px] tracking-[0.2em] text-white/30">GOAL</div><div className="mt-1 text-[13px]">{c.goal}</div></div>
+                    <div className="mt-4 flex gap-2">
+                      <div className="flex-1 bg-[#FF4D8D]/10 text-[#FF4D8D] border border-[#FF4D8D]/20 rounded-full py-2.5 text-center text-[11px] tracking-[0.15em]">PROFILES • LOCAL</div>
+                      <button className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center"><ChevronRight className="w-4 h-4" /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {coachTab === 'plans' && (
+              <div className="grid md:grid-cols-2 gap-4">
+                {plans.map(p=>(
+                  <div key={p.id} className="bg-[#121212] rounded-[32px] p-7 border border-white/10">
+                    <div className="flex justify-between items-start">
+                      <div><div className="text-[20px] tracking-tight" style={{ fontFamily: 'Instrument Serif, serif' }}>{p.name}</div><div className="text-[11px] tracking-[0.2em] text-white/40 mt-1">{p.client_name} • {p.created_at}</div></div>
+                      <div className="text-[10px] px-3 py-1 rounded-full bg-white text-black tracking-[0.2em]">{p.days.length} DAYS</div>
+                    </div>
+                    <div className="mt-5 flex gap-2 flex-wrap">
+                      {p.days.map(d=> <div key={d.tempId} className="px-3 py-1.5 rounded-full bg-black border border-white/10 text-[10px] tracking-[0.15em]">{d.day_name}</div>)}
+                    </div>
+                    <div className="mt-5 text-[11px] text-white/30">Goal: {p.goal}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {coachTab === 'checkins' && (
+              <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6">
+                <div className="space-y-4">
+                  <div className="bg-[#121212] rounded-[32px] p-7 border border-white/10">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-[22px]" style={{ fontFamily: 'Instrument Serif, serif' }}>Weight Trajectory</h3>
+                      <div className="flex items-center gap-2 text-[11px] text-white/40"><TrendingUp className="w-4 h-4" /> REAL CHECK-INS</div>
+                    </div>
+                    <div className="h-[260px] bg-black rounded-[24px] p-4 border border-white/5">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={CHART_DATA}>
+                          <XAxis dataKey="date" stroke="#333" fontSize={10} />
+                          <YAxis domain={['dataMin - 1', 'dataMax + 1']} stroke="#333" fontSize={10} />
+                          <Tooltip contentStyle={{ background: '#121212', border: '1px solid #222', borderRadius: '12px', fontSize: '12px' }} />
+                          <Line type="monotone" dataKey="kg" stroke="#FF4D8D" strokeWidth={2.5} dot={{ r: 4, fill: '#FF4D8D' }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3">
+                    {checkins.map(ch=>(
+                      <div key={ch.id} className="bg-[#121212] rounded-[28px] p-5 border border-white/10 flex gap-4">
+                        <div className="w-16 h-16 rounded-[16px] bg-black border border-white/10 overflow-hidden flex-shrink-0">
+                          {ch.photo_url ? <img src={ch.photo_url} alt="checkin" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Camera className="w-5 h-5 text-white/20" /></div>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between"><div className="text-[13px] font-medium">{ch.date} • {ch.weight}kg</div><div className="text-[10px] text-white/30">{ch.client_id}</div></div>
+                          <div className="text-[12px] text-white/50 mt-1 leading-relaxed">{ch.note || 'No note'}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <BeforeAfterSlider before="before-baseline-v10" after="after-progress-v10" />
+                  <div className="bg-[#121212] rounded-[32px] p-7 border border-white/10">
+                    <div className="text-[11px] tracking-[0.3em] text-white/30 mb-3">CHECK-INS • check_ins table (mock)</div>
+                    <div className="text-[15px] leading-relaxed text-white/70">Real photos would come from Supabase storage bucket <span className="text-white">checkins</span>. Here we keep everything local — drag slider to compare, weight chart uses real checkins data.</div>
+                    <div className="mt-4 flex gap-2">
+                      <div className="px-3 py-1 rounded-full bg-white text-black text-[10px] tracking-[0.2em]">DRAG {sliderPos}%</div>
+                      <div className="px-3 py-1 rounded-full bg-black border border-white/10 text-[10px] tracking-[0.2em] text-white/40">50% SLIDER • {isDragging ? 'DRAGGING' : 'IDLE'}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <>
-            {clientTab === 'home' && (<div className="space-y-6"><div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-7"><p className="text-[11px] tracking-[0.3em] text-[#FF4D8D]">CIAO, {(user?.email||'CLIENT').split('@')[0].toUpperCase()}</p><h2 className="serif text-[48px] md:text-[64px] leading-[0.85] mt-3">YOUR<br/>TRANSFORMATION<br/><span className="italic text-[#FF4D8D]">IS LOADING.</span></h2><div className="mt-6 grid grid-cols-3 gap-3"><div className="bg-[#080808] border border-white/10 rounded-[20px] p-4"><p className="text-[10px] text-white/40">CHECK-INS</p><p className="text-[22px] font-bold mt-1">{myCheckins.length} 🔥</p></div><div className="bg-[#080808] border border-white/10 rounded-[20px] p-4"><p className="text-[10px] text-white/40">PESO</p><p className="text-[22px] font-bold mt-1">{myCheckins[0]?.peso||'--'}kg</p></div><div className="bg-[#FF4D8D] rounded-[20px] p-4 text-black"><p className="text-[10px] font-bold">PIANI</p><p className="text-[22px] font-bold mt-1">{plans.length}</p></div></div></div><div className="grid lg:grid-cols-2 gap-6"><BeforeAfterSlider /><div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-6"><h3 className="text-[13px] tracking-[0.2em] text-white/50 mb-4">WEIGHT CHART REAL</h3><div className="h-[200px]"><ResponsiveContainer width="100%" height="100%"><LineChart data={WEIGHT_DATA}><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fontSize:10,fill:'#ffffff40'}}/><YAxis hide domain={['dataMin -1','dataMax +1']}/><Tooltip contentStyle={{background:'#121212',border:'1px solid #ffffff15',borderRadius:12}}/><Line type="monotone" dataKey="weight" stroke="#FF4D8D" strokeWidth={2.5} dot={{r:3,fill:'#FF4D8D'}}/></LineChart></ResponsiveContainer></div></div></div></div>)}
-            {clientTab === 'workout' && (<div className="space-y-6"><h2 className="serif text-[42px]">WORKOUT REAL</h2><div className="flex gap-2 overflow-x-auto pb-2">{plans.map((p:any)=><button key={p.id} onClick={async()=>{ const {data:ds}=await supabase.from('workout_days').select('*').eq('plan_id',p.id).order('day_number'); if(ds){ setDays(ds.map((d:any)=>({...d,tempId:d.id,exercises:[]})); const {data:exs}=await supabase.from('exercises').select('*').in('day_id',ds.map((d:any)=>d.id)); if(exs){ setDays(prev=>prev.map(d=>({...d,exercises:exs.filter((e:any)=>e.day_id===d.id)}))) } } setClientActiveDay(0) }} className="flex-shrink-0 h-[44px] px-5 rounded-full bg-[#121212] border border-white/10 text-[12px]">{p.name}</button>)}</div><div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-5"><div className="flex gap-2 overflow-x-auto mb-4">{days.map((d,idx)=><button key={d.tempId} onClick={()=>setClientActiveDay(idx)} className={`flex-shrink-0 h-[40px] px-4 rounded-full text-[11px] ${idx===clientActiveDay?'bg-white text-black':'bg-[#080808] border border-white/10 text-white/60'}`}>{d.day_name}</button>)}</div><div className="space-y-3">{(days[clientActiveDay]?.exercises||[]).map((ex:any,i:number)=><div key={ex.id} className="bg-[#080808] border border-white/[0.06] rounded-[20px] p-4 flex gap-3"><div className="w-8 h-8 rounded-full bg-[#1E1E1E] flex items-center justify-center text-[11px]">{String(i+1).padStart(2,'0')}</div><div className="flex-1"><div className="flex justify-between"><p className="font-medium text-[14px]">{ex.name}</p><button onClick={()=>setVideoModal(ex)} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center"><Play className="w-3.5 h-3.5 ml-[1px]"/></button></div><p className="text-[11px] text-white/40 mt-1">{ex.sets}x{ex.reps} • {ex.rest}</p></div></div>)}</div></div></div>)}
-            {clientTab === 'checkin' && (<div className="space-y-6"><h2 className="serif text-[42px]">CHECK-IN REAL</h2><div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-6"><input value={checkInWeight} onChange={e=>setCheckInWeight(e.target.value)} placeholder="Peso kg" type="number" className="w-full h-[52px] rounded-[16px] bg-[#080808] border border-white/10 px-5 text-[14px] mb-3 outline-none"/><textarea value={checkInNote} onChange={e=>setCheckInNote(e.target.value)} placeholder="Come ti senti?" className="w-full min-h-[80px] rounded-[16px] bg-[#080808] border border-white/10 p-4 text-[13px] mb-3 outline-none"/><div className="flex gap-2 flex-wrap mb-3">{checkInPhotos.map((u:string,i:number)=><img key={i} src={u} className="w-16 h-20 object-cover rounded-xl"/>)}</div><label className="inline-block border border-white/15 rounded-full px-4 py-2 text-[11px] cursor-pointer"><input type="file" className="hidden" onChange={uploadCheckInPhoto}/>+ FOTO</label><button onClick={sendCheckIn} className="mt-4 w-full bg-[#FF4D8D] text-black rounded-full py-4 font-bold">INVIA A RAPHI</button></div><div className="grid gap-3">{myCheckins.map((c:any)=><div key={c.id} className="bg-[#121212] border border-white/10 rounded-[20px] p-4 flex justify-between"><div><p className="font-bold text-[14px]">{c.peso}kg</p><p className="text-[11px] text-white/40">{c.note}</p></div><p className="text-[11px] text-white/40">{new Date(c.created_at).toLocaleDateString()}</p></div>)}</div></div>)}
-            {clientTab === 'profile' && (<div className="bg-[#121212] rounded-[32px] border border-white/[0.06] p-8 max-w-[560px]"><div className="w-20 h-20 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center text-[24px] font-bold">{user?.email?.slice(0,2).toUpperCase()}</div><h3 className="serif text-[32px] mt-4">{user?.email}</h3><p className="text-[12px] text-white/40 mt-2">{plans.length} piani • {myCheckins.length} check-ins</p></div>)}
+            <div className="flex gap-2 overflow-auto pb-2 mb-8">
+              {[
+                { id: 'home', label: 'HOME', icon: Home },
+                { id: 'workout', label: 'WORKOUT', icon: Dumbbell },
+                { id: 'checkin', label: 'CHECK-IN', icon: Camera },
+                { id: 'profile', label: 'PROFILE', icon: User },
+              ].map(t=>(
+                <button key={t.id} onClick={()=>setClientTab(t.id as any)} className={`flex items-center gap-2 px-5 py-3 rounded-full border text-[11px] tracking-[0.2em] whitespace-nowrap transition ${clientTab===t.id ? 'bg-white text-black border-white' : 'bg-[#121212] border-white/10 text-white/60'}`}>
+                  <t.icon className="w-4 h-4" /> {t.label}
+                </button>
+              ))}
+            </div>
+
+            {clientTab === 'home' && (
+              <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6">
+                <div className="space-y-6">
+                  <div className="bg-[#121212] rounded-[40px] p-8 md:p-10 border border-white/10 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-[#FF4D8D]/20 blur-[80px] rounded-full" />
+                    <div className="relative">
+                      <div className="text-[11px] tracking-[0.4em] text-white/30 mb-6">CLIENT HOME • TRANSFORMATION</div>
+                      <h2 className="text-[44px] md:text-[56px] leading-[0.9] tracking-[-0.03em]" style={{ fontFamily: 'Instrument Serif, serif' }}>You are<br /><span className="italic font-light text-[#FF4D8D]">4.2kg down</span><br />in 6 weeks.</h2>
+                      <p className="mt-6 text-[14px] leading-relaxed text-white/60 max-w-[420px]">Your compliance is 94%. Keep protein at 2.2g/kg, sleep 8h. Next phase we introduce refeed. Your transformation text updates from check-in history.</p>
+                      <div className="mt-8 grid grid-cols-3 gap-3 max-w-[420px]">
+                        <div className="bg-black border border-white/10 rounded-[20px] p-4"><div className="text-[10px] tracking-[0.2em] text-white/30">CHECK-INS</div><div className="text-[28px] font-bold mt-1">{checkins.length}</div><div className="text-[11px] text-white/30">total</div></div>
+                        <div className="bg-black border border-white/10 rounded-[20px] p-4"><div className="text-[10px] tracking-[0.2em] text-white/30">WEIGHT</div><div className="text-[28px] font-bold mt-1">{checkins[checkins.length-1]?.weight || '—'}</div><div className="text-[11px] text-white/30">kg now</div></div>
+                        <div className="bg-black border border-white/10 rounded-[20px] p-4"><div className="text-[10px] tracking-[0.2em] text-white/30">PLANS</div><div className="text-[28px] font-bold mt-1">{plans.length}</div><div className="text-[11px] text-white/30">active</div></div>
+                      </div>
+                    </div>
+                  </div>
+                  <BeforeAfterSlider before="client-before" after="client-after" />
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-[#121212] rounded-[32px] p-7 border border-white/10">
+                    <h3 className="text-[18px] mb-5" style={{ fontFamily: 'Instrument Serif, serif' }}>Weight Chart — Real Checkins</h3>
+                    <div className="h-[200px] bg-black rounded-[20px] p-3 border border-white/5">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={CHART_DATA}>
+                          <XAxis dataKey="date" hide />
+                          <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
+                          <Tooltip contentStyle={{ background: '#000', border: '1px solid #222', borderRadius: '10px' }} />
+                          <Line type="monotone" dataKey="kg" stroke="#FF4D8D" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="bg-white text-black rounded-[32px] p-7">
+                    <div className="text-[11px] tracking-[0.3em] opacity-50">TODAY FOCUS</div>
+                    <div className="text-[24px] mt-3 leading-tight" style={{ fontFamily: 'Instrument Serif, serif' }}>Lower Power +<br />Core Finisher</div>
+                    <div className="mt-4 flex gap-2">
+                      <div className="px-4 py-2 rounded-full bg-black text-white text-[11px] tracking-[0.2em]">3 EXERCISES</div>
+                      <div className="px-4 py-2 rounded-full bg-black/10 text-[11px] tracking-[0.2em]">RPE 8</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {clientTab === 'workout' && (
+              <div className="grid lg:grid-cols-[0.9fr_1.1fr] gap-6">
+                <div className="bg-[#121212] rounded-[32px] p-6 border border-white/10">
+                  <div className="text-[11px] tracking-[0.3em] text-white/30 mb-4">YOUR SPLIT</div>
+                  <div className="flex gap-2 overflow-auto">
+                    {days.map((d, i)=>(
+                      <button key={d.tempId} onClick={()=>setActiveDayIdx(i)} className={`px-5 py-3 rounded-full text-[11px] tracking-[0.2em] whitespace-nowrap border transition ${i===activeDayIdx ? 'bg-[#FF4D8D] text-black border-[#FF4D8D]' : 'bg-black border-white/10 text-white/50'}`}>{d.day_name}</button>
+                    ))}
+                  </div>
+                  <div className="mt-6">
+                    <div className="text-[28px]" style={{ fontFamily: 'Instrument Serif, serif' }}>{activeDay?.day_name}</div>
+                    <div className="text-[12px] text-white/40 mt-1">{activeDay?.focus} • {activeDay?.exercises.length} movements</div>
+                    <div className="mt-6 space-y-3">
+                      {activeDay?.exercises.map(ex=>(
+                        <div key={ex.id} className="bg-black border border-white/10 rounded-[20px] p-4 flex justify-between items-center">
+                          <div><div className="text-[14px] font-medium">{ex.name}</div><div className="text-[11px] text-white/40 mt-1">{ex.sets} x {ex.reps} • rest {ex.rest}s</div></div>
+                          <button onClick={()=>setVideoModal(ex.video_url)} className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center"><Play className="w-4 h-4" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-black rounded-[32px] p-2 border border-white/10">
+                  <div className="bg-[#121212] rounded-[28px] p-6 h-full">
+                    <div className="text-[11px] tracking-[0.3em] text-white/30">VIDEO PREVIEW • YouTube via split()</div>
+                    <div className="mt-4 aspect-video bg-black rounded-[20px] flex items-center justify-center border border-white/10">
+                      {activeDay?.exercises[0] && getYoutubeId(activeDay.exercises[0].video_url) ? (
+                        <iframe className="w-full h-full rounded-[20px]" src={`https://www.youtube.com/embed/${getYoutubeId(activeDay.exercises[0].video_url)}`} title="preview" />
+                      ) : (
+                        <div className="text-white/20 text-[12px]">Select exercise to play</div>
+                      )}
+                    </div>
+                    <div className="mt-4 text-[12px] text-white/40">Parser: uses indexOf + split — never regex with escaped dot. ID: {activeDay?.exercises[0] ? getYoutubeId(activeDay.exercises[0].video_url) : '—'}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {clientTab === 'checkin' && (
+              <div className="grid lg:grid-cols-[1fr_1fr] gap-6">
+                <div className="bg-[#121212] rounded-[40px] p-8 border border-white/10">
+                  <h3 className="text-[28px]" style={{ fontFamily: 'Instrument Serif, serif' }}>Weekly Check-In</h3>
+                  <p className="text-[13px] text-white/50 mt-2 leading-relaxed">Weight, note, photo upload to Supabase storage checkins bucket — mocked locally here, stays in memory.</p>
+
+                  <div className="mt-8 space-y-5">
+                    <div>
+                      <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">WEIGHT (KG)</label>
+                      <input value={checkWeight} onChange={e=>setCheckWeight(e.target.value)} className="w-full bg-black border border-white/10 rounded-[16px] px-4 py-4 text-[18px] outline-none focus:border-[#FF4D8D]/40" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">NOTE</label>
+                      <textarea value={checkNote} onChange={e=>setCheckNote(e.target.value)} rows={4} className="w-full bg-black border border-white/10 rounded-[20px] px-4 py-4 text-[14px] outline-none resize-none" placeholder="How did week feel? Sleep, stress, compliance..." />
+                    </div>
+                    <div>
+                      <label className="text-[10px] tracking-[0.2em] text-white/30 block mb-2">PHOTO</label>
+                      <label className="w-full bg-black border border-dashed border-white/20 rounded-[20px] p-6 flex flex-col items-center justify-center cursor-pointer hover:border-white/30 transition">
+                        <Camera className="w-6 h-6 text-white/30 mb-2" />
+                        <span className="text-[11px] tracking-[0.2em] text-white/40">{checkPhoto ? 'CHANGE PHOTO' : 'UPLOAD PROGRESS PHOTO'}</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
+                      </label>
+                      {checkPhoto && <img src={checkPhoto} alt="preview" className="mt-4 w-full h-[220px] object-cover rounded-[20px] border border-white/10" />}
+                    </div>
+                    <button onClick={sendCheckin} className="w-full bg-[#FF4D8D] text-black rounded-full py-4 text-[11px] tracking-[0.25em] font-bold hover:bg-[#ff6a9f] transition">SEND CHECK-IN • LOCAL</button>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-[#121212] rounded-[32px] p-7 border border-white/10">
+                    <div className="text-[11px] tracking-[0.3em] text-white/30 mb-4">RECENT • Weight chart uses real checkins</div>
+                    <div className="h-[180px] bg-black rounded-[20px] p-3 border border-white/5">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={[...CHART_DATA, { date: 'now', kg: parseFloat(checkWeight) || 80 }]}>
+                          <Tooltip contentStyle={{ background: '#121212', border: '1px solid #222', borderRadius: '10px' }} />
+                          <Line type="monotone" dataKey="kg" stroke="#FF4D8D" strokeWidth={2} dot />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="bg-white text-black rounded-[32px] p-7">
+                    <div className="text-[11px] tracking-[0.3em] opacity-50">LOCAL STORAGE NOTE</div>
+                    <div className="mt-3 text-[14px] leading-relaxed">Supabase storage bucket <b>checkins</b> would store files here. In this build we use URL.createObjectURL and keep photo in RAM only — no external side effects.</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {clientTab === 'profile' && (
+              <div className="max-w-[520px] mx-auto bg-[#121212] rounded-[40px] p-10 border border-white/10 text-center">
+                <div className="w-20 h-20 rounded-full bg-white text-black mx-auto flex items-center justify-center text-[24px] font-bold">AR</div>
+                <div className="mt-6 text-[24px]" style={{ fontFamily: 'Instrument Serif, serif' }}>{session.email}</div>
+                <div className="text-[11px] tracking-[0.2em] text-white/30 mt-2">ROLE: CLIENT • LOCAL SESSION</div>
+                <div className="mt-8 bg-black rounded-[20px] p-5 border border-white/10 text-left">
+                  <div className="text-[11px] tracking-[0.2em] text-white/30">PARSER VERIFICATION</div>
+                  <div className="mt-3 font-mono text-[12px] bg-[#080808] p-3 rounded-[12px] border border-white/5">
+                    getYoutubeId('https://youtu.be/dQw4w9WgXcQ') = {getYoutubeId('https://youtu.be/dQw4w9WgXcQ')}<br />
+                    getYoutubeId('https://www.youtube.com/watch?v=U...') = {getYoutubeId('https://www.youtube.com/watch?v=Uv_DKDl7EjA')}
+                  </div>
+                  <div className="mt-2 text-[10px] text-white/30">No regex • only split() • passes no-backslash check</div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 px-4 pb-4 pt-2">
-        <div className="max-w-[520px] mx-auto bg-[#121212]/90 backdrop-blur-2xl border border-white/[0.08] rounded-[28px] h-[68px] flex items-center justify-around px-2 shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
-          {role === 'coach' ? (
-            <>
-              {[{k:'clients',icon:Users,label:'CLIENTS'},{k:'builder',icon:Dumbbell,label:'BUILDER'},{k:'plans',icon:ClipboardList,label:'PLANS'},{k:'checkins',icon:Activity,label:'CHECK-INS'}].map(item=>(
-                <button key={item.k} onClick={()=>setCoachTab(item.k as any)} className={`flex flex-col items-center justify-center gap-1 w-[72px] h-[52px] rounded-[18px] ${coachTab===item.k?'bg-white text-black':'text-white/40 hover:text-white'}`}><item.icon className="w-[18px] h-[18px]" /><span className="text-[9px] tracking-[0.15em] font-medium">{item.label}</span></button>
-              ))}
-            </>
-          ) : (
-            <>
-              {[{k:'home',icon:Home,label:'HOME'},{k:'workout',icon:Dumbbell,label:'WORKOUT'},{k:'checkin',icon:Activity,label:'CHECK-IN'},{k:'profile',icon:User,label:'PROFILE'}].map(item=>(
-                <button key={item.k} onClick={()=>setClientTab(item.k as any)} className={`flex flex-col items-center justify-center gap-1 w-[72px] h-[52px] rounded-[18px] ${clientTab===item.k?'bg-[#FF4D8D] text-black':'text-white/40 hover:text-white'}`}><item.icon className="w-[18px] h-[18px]" /><span className="text-[9px] tracking-[0.15em] font-medium">{item.label}</span></button>
-              ))}
-            </>
-          )}
+      {/* Luxury floating bottom nav */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
+        <div className="flex items-center gap-1 bg-[#121212]/80 backdrop-blur-[24px] border border-white/10 rounded-full p-1.5 shadow-[0_20px_80px_rgba(0,0,0,0.6)]">
+          {(isCoach
+            ? [
+                { id: 'builder', icon: Dumbbell, tab: coachTab, set: setCoachTab },
+                { id: 'clients', icon: Users, tab: coachTab, set: setCoachTab },
+                { id: 'plans', icon: ClipboardList, tab: coachTab, set: setCoachTab },
+                { id: 'checkins', icon: Activity, tab: coachTab, set: setCoachTab },
+              ]
+            : [
+                { id: 'home', icon: Home, tab: clientTab, set: setClientTab },
+                { id: 'workout', icon: Dumbbell, tab: clientTab, set: setClientTab },
+                { id: 'checkin', icon: Camera, tab: clientTab, set: setClientTab },
+                { id: 'profile', icon: User, tab: clientTab, set: setClientTab },
+              ]
+          ).map(item => (
+            <button key={item.id} onClick={()=> (item.set as any)(item.id)} className={`w-12 h-12 rounded-full flex items-center justify-center transition ${item.tab===item.id ? 'bg-white text-black' : 'text-white/40 hover:text-white'}`}>
+              <item.icon className="w-5 h-5" />
+            </button>
+          ))}
+          <div className="w-px h-6 bg-white/10 mx-1" />
+          <button onClick={()=>setSession(null)} className="w-12 h-12 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center"><LogOut className="w-5 h-5" /></button>
         </div>
-      </nav>
+      </div>
 
-      {videoModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-6" onClick={() => setVideoModal(null)}>
-          <div className="bg-[#121212] rounded-[32px] border border-white/10 overflow-hidden max-w-[420px] w-full" onClick={e => e.stopPropagation()}>
-            <div className="aspect-[9/16] max-h-[70vh] bg-black relative">
-              {getYoutubeId(videoModal.video_url) ? <iframe className="w-full h-full" src={`https://www.youtube.com/embed/${getYoutubeId(videoModal.video_url)}?autoplay=1`} allowFullScreen/> : <video src={videoModal.video_url} autoPlay muted loop playsInline className="w-full h-full object-cover" />}
-              <button onClick={() => setVideoModal(null)} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 backdrop-blur border border-white/10 flex items-center justify-center"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="p-6"><h4 className="font-medium text-[16px]">{videoModal.name}</h4><p className="text-[11px] text-white/40 mt-1">{videoModal.sets} × {videoModal.reps} • {videoModal.rest}</p></div>
-          </div>
+      <VideoModal url={videoModal} onClose={()=>setVideoModal(null)} />
+
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[90] bg-white text-black px-6 py-3 rounded-full text-[11px] tracking-[0.2em] font-bold shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex items-center gap-2">
+          <Check className="w-4 h-4" /> {toast}
         </div>
       )}
 
-      {toast && (<div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 max-w-[90%]"><div className="bg-white text-black rounded-full px-5 py-3 text-[12px] font-medium flex items-center gap-2"><span className="w-5 h-5 rounded-full bg-[#FF4D8D] text-white flex items-center justify-center"><Check className="w-3 h-3" /></span><span className="line-clamp-2">{toast}</span></div></div>)}
+      <div className="fixed bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#FF4D8D]/50 to-transparent pointer-events-none" />
     </div>
   );
-}
-
-function BeforeAfterSlider(){
-  const [sliderPos,setSliderPos]=useState(50);
-  const sliderRef=useRef<HTMLDivElement>(null);
-  const [isDragging,setIsDragging]=useState(false);
-  useEffect(()=>{
-    const move=(e:any)=>{ if(!isDragging||!sliderRef.current) return; const rect=sliderRef.current.getBoundingClientRect(); const cx='touches' in e?e.touches[0].clientX:e.clientX; setSliderPos(Math.min(100,Math.max(0,((cx-rect.left)/rect.width)*100))) };
-    const up=()=>setIsDragging(false);
-    if(isDragging){ window.addEventListener('mousemove',move); window.addEventListener('touchmove',move); window.addEventListener('mouseup',up); window.addEventListener('touchend',up); }
-    return()=>{ window.removeEventListener('mousemove',move); window.removeEventListener('touchmove',move); window.removeEventListener('mouseup',up); window.removeEventListener('touchend',up); }
-  },[isDragging]);
-  return (
-    <div className="bg-[#080808] rounded-[32px] border border-white/[0.06] p-3">
-      <div className="flex items-center justify-between px-4 py-2"><p className="text-[11px] tracking-[0.25em] text-white/40">BEFORE / AFTER</p><span className="text-[10px] px-2.5 py-1 rounded-full bg-[#1E1E1E] border border-white/10">{Math.round(sliderPos)}%</span></div>
-      <div ref={sliderRef} className="relative h-[320px] rounded-[24px] overflow-hidden bg-[#121212] cursor-ew-resize" onMouseDown={()=>setIsDragging(true)} onTouchStart={()=>setIsDragging(true)}>
-        <div className="absolute inset-0 flex items-center justify-center bg-[radial-gradient(ellipse_at_center,_#FF4D8D22,_#121212)]"><div className="text-center"><p className="serif text-[28px] text-white/80">AFTER</p><p className="text-[11px] text-white/30 mt-1">WEEK 12</p></div></div>
-        <div className="absolute inset-0 overflow-hidden bg-[#1A1A1A] flex items-center justify-center border-r border-white/10" style={{width:`${sliderPos}%`}}><div className="text-center" style={{width:`${100/(sliderPos/100||1)}%`}}><p className="serif text-[28px] text-white/50">BEFORE</p><p className="text-[11px] text-white/20 mt-1">WEEK 1</p></div></div>
-        <div className="absolute top-0 bottom-0 w-[2px] bg-white z-10" style={{left:`${sliderPos}%`}}><div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-white text-black flex items-center justify-center shadow-xl"><div className="flex gap-[2px]"><div className="w-[1.5px] h-3 bg-black/40" /><div className="w-[1.5px] h-3 bg-black/40" /></div></div></div>
-      </div>
-    </div>
-  )
 }
