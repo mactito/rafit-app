@@ -1,100 +1,170 @@
 'use client'
-export const dynamic = 'force-dynamic'
-import { useState, useEffect } from 'react';
-import { LogOut, Dumbbell, ClipboardList, Users, Home, User } from 'lucide-react';
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { CoachBuilder } from '@/components/CoachBuilder'
-import { ClientApp } from '@/components/ClientApp'
-import { VideoModal } from '@/components/VideoModal'
-import { BeforeAfterSlider } from '@/components/BeforeAfterSlider'
-import { WeightChart } from '@/components/WeightChart'
 
-export default function Page(){
-  const [isLoggedIn,setIsLoggedIn]=useState(false)
-  const [role,setRole]=useState('coach')
-  const [user,setUser]=useState<any>(null)
-  const [email,setEmail]=useState('')
-  const [password,setPassword]=useState('')
-  const [clients,setClients]=useState<any[]>([])
-  const [plans,setPlans]=useState<any[]>([])
-  const [myPlans,setMyPlans]=useState<any[]>([])
-  const [myDays,setMyDays]=useState<any[]>([])
-  const [library,setLibrary]=useState<any[]>([])
-  const [days,setDays]=useState<any[]>([
-    {tempId:'d1',day_number:1,day_name:'DAY 1 - GLUTEI FOCUS',exercises:[]},
-    {tempId:'d2',day_number:2,day_name:'DAY 2 - UPPER',exercises:[]}
-  ])
-  const [activeDayIdx,setActiveDayIdx]=useState(0)
-  const [clientActiveDay,setClientActiveDay]=useState(0)
-  const [planName,setPlanName]=useState('')
-  const [selectedClient,setSelectedClient]=useState('')
-  const [goal,setGoal]=useState('TONIFICAZIONE BIKINI')
-  const [coachTab,setCoachTab]=useState('builder')
-  const [toast,setToast]=useState<string|null>(null)
-  const [videoModal,setVideoModal]=useState<any>(null)
-  const [sliderPos,setSliderPos]=useState(50)
-  const [isDragging,setIsDragging]=useState(false)
+type Exercise = { id: string; name: string; muscle_group?: string; video_url?: string; description?: string }
+type Profile = { id: string; full_name?: string; email?: string }
+type WorkoutDay = { id: string; workout_plan_id: string; exercise_id: string; sets?: number; reps?: string; order_index?: number; exercise_library?: Exercise }
 
-  useEffect(()=>{(async()=>{
-    const {data}=await supabase.auth.getSession();
-    if(data.session?.user){
-      setUser(data.session.user);
-      const {data:prof}=await supabase.from('profiles').select('role').eq('id',data.session.user.id).single();
-      if(prof){ setRole(prof.role as any); setIsLoggedIn(true); }
+export default function BuilderPage() {
+  const [exercises, setExercises] = useState<Exercise[]>([])
+  const [clients, setClients] = useState<Profile[]>([])
+  const [selectedClient, setSelectedClient] = useState<Profile | null>(null)
+  const [planId, setPlanId] = useState<string | null>(null)
+  const [program, setProgram] = useState<WorkoutDay[]>([])
+  const [showExerciseForm, setShowExerciseForm] = useState(false)
+  const [newEx, setNewEx] = useState({ name: '', muscle_group: 'Chest', video_url: '' })
+
+  useEffect(() => { loadAll() }, [])
+
+  const loadAll = async () => {
+    const { data: ex } = await supabase.from('exercise_library').select('*').order('name')
+    const { data: cl } = await supabase.from('profiles').select('*').order('created_at', { ascending: false })
+    if (ex) setExercises(ex)
+    if (cl) setClients(cl)
+  }
+
+  const loadClientProgram = async (client: Profile) => {
+    setSelectedClient(client)
+    // find or create workout_plan for this client
+    let { data: plans } = await supabase.from('workout_plans').select('*').eq('user_id', client.id).limit(1)
+    if (!plans?.length) {
+      const { data: plansByProfile } = await supabase.from('workout_plans').select('*').eq('profile_id', client.id).limit(1)
+      plans = plansByProfile as any
     }
-  })()},[])
-
-  const loadData=async()=>{
-    const {data:cl}=await supabase.from('profiles').select('*').eq('role','client');
-    if(cl) setClients(cl);
-    const {data:pl}=await supabase.from('workout_plans').select('*');
-    if(pl) setPlans(pl);
-    const {data:lib}=await supabase.from('exercise_library').select('*');
-    if(lib) setLibrary(lib);
-    if(user){
-      const {data:myP}=await supabase.from('workout_plans').select('*').eq('client_id',user.id).order('created_at',{ascending:false});
-      if(myP && myP.length>0){
-        setMyPlans(myP);
-        const {data:ds}=await supabase.from('workout_days').select('*').eq('plan_id',myP[0].id).order('day_number');
-        if(ds){
-          const {data:exs}=await supabase.from('exercises').select('*').in('day_id',ds.map((d:any)=>d.id));
-          if(exs){
-            const merged=ds.map((d:any)=>({tempId:d.id,day_number:d.day_number,day_name:d.day_name,exercises:exs.filter((e:any)=>e.day_id===d.id)}));
-            setMyDays(merged);
-          }
-        }
+    if (!plans?.length) {
+      // create plan
+      const { data: newPlan } = await supabase.from('workout_plans').insert({ user_id: client.id, name: `${client.full_name || 'Client'} Program` }).select().single()
+      if (newPlan) {
+        setPlanId(newPlan.id)
+        setProgram([])
+        return
       }
     }
-  }
-  useEffect(()=>{ if(isLoggedIn) loadData(); },[isLoggedIn,user]);
-
-  const login=async()=>{
-    const {data,error}=await supabase.auth.signInWithPassword({email,password});
-    if(error){ alert(error.message); return }
-    if(data.user){ setUser(data.user); const {data:prof}=await supabase.from('profiles').select('role').eq('id',data.user.id).single(); if(prof){ setRole(prof.role as any); setIsLoggedIn(true); } }
+    if (plans && plans.length > 0) {
+      setPlanId(plans[0].id)
+      const { data: days } = await supabase.from('workout_days').select('*, exercise_library(*)').eq('workout_plan_id', plans[0].id).order('order_index')
+      if (days) setProgram(days as any)
+    }
   }
 
-  const WEIGHT_DATA=[{date:'W1',weight:68},{date:'W2',weight:67.5}];
+  const addExerciseToProgram = async (ex: Exercise) => {
+    if (!planId) return
+    const { data } = await supabase.from('workout_days').insert({
+      workout_plan_id: planId,
+      exercise_id: ex.id,
+      order_index: program.length,
+      sets: 3,
+      reps: '10'
+    }).select('*, exercise_library(*)').single()
+    if (data) setProgram([...program, data as any])
+  }
 
-  if(!isLoggedIn) return <div className="min-h-screen bg-[#080808] text-white flex items-center justify-center p-6"><div className="w-full max-w-[400px]"><h1 className="text-[48px] font-black">RAFIT</h1><p className="text-[11px] text-white/50">V12 MODULAR - FULL CLIENT + COACH REAL - NO TIMEOUT</p><div className="mt-6 bg-[#121212] rounded-[32px] p-6 border border-white/10"><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email REAL" className="w-full h-[48px] rounded-full bg-black border border-white/10 px-5 mb-3"/><input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Password" className="w-full h-[48px] rounded-full bg-black border border-white/10 px-5 mb-4"/><button onClick={login} className="w-full bg-white text-black rounded-full py-3">ACCEDI REAL MODULAR</button></div></div></div>
+  const removeFromProgram = async (dayId: string) => {
+    await supabase.from('workout_days').delete().eq('id', dayId)
+    setProgram(program.filter(p => p.id !== dayId))
+  }
+
+  const createExercise = async () => {
+    if (!newEx.name) return
+    const { data } = await supabase.from('exercise_library').insert(newEx).select().single()
+    if (data) setExercises([data, ...exercises])
+    setShowExerciseForm(false)
+    setNewEx({ name: '', muscle_group: 'Chest', video_url: '' })
+  }
 
   return (
-    <div className="min-h-screen bg-[#080808] text-white pb-[120px]">
-      <header className="sticky top-0 bg-black/80 backdrop-blur border-b border-white/10 p-4 flex justify-between"><span className="font-black">RAFIT {role.toUpperCase()} MODULAR REAL - NO TIMEOUT</span><span className="text-[10px] text-white/40">{role==='client'?myDays.length+' DAYS CLIENT REAL':'BUILDER REAL'} • FULL LUXURY SPLIT FILES</span><button onClick={async()=>{await supabase.auth.signOut(); setIsLoggedIn(false)}} className="w-8 h-8 border border-white/10 rounded-full"><LogOut className="w-4 h-4"/></button></header>
-      <div className="p-4 max-w-[1200px] mx-auto">
-        {role==='coach'?(
-          <div>
-            <div className="flex gap-2 mb-4">{[{k:'builder',label:'BUILDER REAL FULL'},{k:'clients',label:'CLIENTS REAL'},{k:'plans',label:'PLANS REAL'}].map(t=><button key={t.k} onClick={()=>setCoachTab(t.k)} className={`px-4 py-2 rounded-full text-[11px] ${coachTab===t.k?'bg-white text-black':'bg-white/5 border border-white/10'}`}>{t.label}</button>)}</div>
-            {coachTab==='builder'&&<CoachBuilder user={user} clients={clients} library={library} days={days} setDays={setDays} activeDayIdx={activeDayIdx} setActiveDayIdx={setActiveDayIdx} planName={planName} setPlanName={setPlanName} selectedClient={selectedClient} setSelectedClient={setSelectedClient} goal={goal} setGoal={setGoal} setToast={setToast} setVideoModal={setVideoModal} loadData={loadData} />}
-            {coachTab==='clients'&&<div><h2 className="text-[28px] font-black">CLIENTS REAL ({clients.length}) - MODULAR FULL</h2><div className="grid md:grid-cols-3 gap-4 mt-4">{clients.map((c:any)=><div key={c.id} className="bg-[#121212] rounded-[24px] border border-white/10 p-4"><p className="font-bold">{c.email}</p></div>)}</div><div className="mt-8 grid lg:grid-cols-2 gap-6"><BeforeAfterSlider pos={sliderPos} setPos={setSliderPos} isDragging={isDragging} setIsDragging={setIsDragging} /><WeightChart data={WEIGHT_DATA} /></div></div>}
-            {coachTab==='plans'&&<div><h2 className="text-[28px] font-black">PLANS REAL ({plans.length}) MODULAR</h2>{plans.map((p:any)=><div key={p.id} className="bg-[#121212] border border-white/10 rounded-[16px] p-3 mt-2">{p.name} REAL</div>)}</div>}
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <div className="max-w- mx-auto p-6">
+        <h1 className="text-2xl font-bold tracking-tight">RAFIT Builder — Clean</h1>
+        <p className="text-zinc-500 text-sm mb-6">Exercise library → Clients → Program (All saved to Supabase)</p>
+
+        <div className="grid grid-cols-12 gap-5">
+          {/* 1. EXERCISE LIBRARY */}
+          <div className="col-span-3 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-semibold text-sm">1. EXERCISE LIBRARY</h3>
+              <button onClick={()=>setShowExerciseForm(true)} className="text-xs bg-white text-black px-3 py-1.5 rounded-full font-medium">+ New</button>
+            </div>
+            <div className="space-y-2 max-h- overflow-y-auto pr-1">
+              {exercises.map(ex => (
+                <div key={ex.id} className="bg-black border border-zinc-800 rounded-xl p-3 hover:border-zinc-700 group">
+                  <div className="font-medium text-">{ex.name}</div>
+                  <div className="text- text-zinc-500">{ex.muscle_group || 'General'}</div>
+                  {selectedClient && (
+                    <button onClick={()=>addExerciseToProgram(ex)} className="mt-2 w-full text- bg-zinc-800 group-hover:bg-white group-hover:text-black py-1.5 rounded-full transition">+ Add to {selectedClient.full_name?.split(' ')[0]}</button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
-        ):(
-          <ClientApp user={user} myPlans={myPlans} myDays={myDays} clientActiveDay={clientActiveDay} setClientActiveDay={setClientActiveDay} setVideoModal={setVideoModal} />
-        )}
+
+          {/* 2. CLIENTS */}
+          <div className="col-span-3 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4">
+            <h3 className="font-semibold text-sm mb-4">2. CLIENTS (profiles)</h3>
+            <div className="space-y-2 max-h- overflow-y-auto pr-1">
+              {clients.map(c => (
+                <button key={c.id} onClick={()=>loadClientProgram(c)} className={`w-full text-left p-3 rounded-xl border transition ${selectedClient?.id===c.id?'bg-white text-black border-white':'bg-black border-zinc-800 hover:border-zinc-700'}`}>
+                  <div className="font-medium text-">{c.full_name || c.email?.split('@')[0] || 'Unnamed'}</div>
+                  <div className="text- opacity-60 truncate">{c.email || c.id.slice(0,8)}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. CLIENT PROGRAM */}
+          <div className="col-span-6 bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
+            {!selectedClient ? (
+              <div className="h- flex flex-col items-center justify-center text-zinc-600">
+                <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-3">👈</div>
+                <p className="text-sm">Select a client to view their program</p>
+                <p className="text-xs mt-1">Program = workout_plans + workout_days in Supabase</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h2 className="text-xl font-bold">{selectedClient.full_name || selectedClient.email}'s Program</h2>
+                    <p className="text-xs text-zinc-500">{program.length} exercises • workout_plan: {planId?.slice(0,8)}</p>
+                  </div>
+                  <div className="text-xs bg-white text-black px-3 py-1 rounded-full">{program.length} items</div>
+                </div>
+
+                <div className="space-y-2">
+                  {program.length===0 && <div className="py-12 text-center text-zinc-500 text-sm border border-dashed border-zinc-800 rounded-xl">No exercises yet. Add from Exercise Library on left.</div>}
+                  {program.map((day, idx) => (
+                    <div key={day.id} className="flex items-center gap-3 bg-black border border-zinc-800 rounded-xl p-3">
+                      <div className="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-">{idx+1}</div>
+                      <div className="flex-1">
+                        <div className="text- font-medium">{day.exercise_library?.name || 'Exercise'}</div>
+                        <div className="text- text-zinc-500">{day.sets || 3} sets x {day.reps || '10'} reps</div>
+                      </div>
+                      <input defaultValue={day.sets || 3} onBlur={async(e)=>{await supabase.from('workout_days').update({ sets: parseInt(e.target.value) }).eq('id', day.id)}} className="w-12 bg-zinc-900 border border-zinc-800 rounded-lg p-1 text-xs text-center"/>
+                      <input defaultValue={day.reps || '10'} onBlur={async(e)=>{await supabase.from('workout_days').update({ reps: e.target.value }).eq('id', day.id)}} className="w-14 bg-zinc-900 border border-zinc-800 rounded-lg p-1 text-xs text-center"/>
+                      <button onClick={()=>removeFromProgram(day.id)} className="text-zinc-600 hover:text-red-400 text-xs px-2">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
-      {videoModal&&<VideoModal exercise={videoModal} onClose={()=>setVideoModal(null)} />}
-      {toast&&<div className="fixed top-20 left-1/2 -translate-x-1/2 bg-white text-black rounded-full px-5 py-3 text-[12px]">{toast}</div>}
+
+      {showExerciseForm && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm">
+            <h3 className="font-bold mb-4">New Exercise → exercise_library</h3>
+            <input value={newEx.name} onChange={e=>setNewEx({...newEx, name:e.target.value})} placeholder="Exercise name" className="w-full bg-black border border-zinc-800 rounded-xl p-3 mb-2 text-sm"/>
+            <input value={newEx.muscle_group} onChange={e=>setNewEx({...newEx, muscle_group:e.target.value})} placeholder="Muscle group" className="w-full bg-black border border-zinc-800 rounded-xl p-3 mb-2 text-sm"/>
+            <input value={newEx.video_url} onChange={e=>setNewEx({...newEx, video_url:e.target.value})} placeholder="YouTube URL" className="w-full bg-black border border-zinc-800 rounded-xl p-3 mb-4 text-sm"/>
+            <div className="flex gap-2">
+              <button onClick={()=>setShowExerciseForm(false)} className="flex-1 bg-zinc-800 py-2.5 rounded-xl text-sm">Cancel</button>
+              <button onClick={createExercise} className="flex-1 bg-white text-black py-2.5 rounded-xl text-sm font-bold">Save to Supabase</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
