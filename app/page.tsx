@@ -1,110 +1,234 @@
 'use client'
+export const dynamic = 'force-dynamic'
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 
-// SAFE IMPORTS - works whether components use default or named export
-import * as CoachMod from '@/components/CoachBuilder'
-import * as ClientMod from '@/components/ClientApp'
-import * as VideoMod from '@/components/VideoModal'
-import * as BeforeMod from '@/components/BeforeAfterSlider'
-import * as WeightMod from '@/components/WeightChart'
-
-const CoachBuilder = (CoachMod as any).CoachBuilder || (CoachMod as any).default
-const ClientApp = (ClientMod as any).default || (ClientMod as any).ClientApp
-const VideoModal = (VideoMod as any).VideoModal || (VideoMod as any).default
-const BeforeAfterSlider = (BeforeMod as any).BeforeAfterSlider || (BeforeMod as any).default
-const WeightChart = (WeightMod as any).WeightChart || (WeightMod as any).default
-
-export default function Page() {
+export default function App() {
   const [user, setUser] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<'home'|'builder'|'checkin'>('home')
+  const [role, setRole] = useState<any>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [clients, setClients] = useState<any[]>([])
-  const [library, setLibrary] = useState<any[]>([])
-  const [days, setDays] = useState<any[]>([
-    { tempId: 'd1', day_number: 1, day_name: 'DAY 1 - GLUTEI', focus: 'GLUTEI FOCUS', exercises: [] },
-    { tempId: 'd2', day_number: 2, day_name: 'DAY 2 - GAMBE', focus: 'GAMBE', exercises: [] },
-    { tempId: 'd3', day_number: 3, day_name: 'DAY 3 - SPALLE', focus: 'SPALLE', exercises: [] },
-  ])
-  const [activeDayIdx, setActiveDayIdx] = useState(0)
-  const [planName, setPlanName] = useState('')
-  const [selectedClient, setSelectedClient] = useState('')
-  const [goal, setGoal] = useState('glutei')
-  const [toast, setToast] = useState<string|null>(null)
-  const [videoModal, setVideoModal] = useState<any>(null)
-  const [checkins, setCheckins] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [view, setView] = useState('login')
 
-  useEffect(()=>{ checkUser() },[])
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user) {
+        setUser(data.session.user)
+        supabase.from('profiles').select('role').eq('id', data.session.user.id).single().then(({ data: p }) => {
+          const r = p?.role || (data.session!.user.email?.includes('coach') ? 'coach' : 'client')
+          setRole(r)
+          setView(r)
+        })
+      }
+    })
+  }, [])
 
-  const checkUser = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if(session?.user){ setUser(session.user); await loadData() }
+  const handleLogin = async () => {
+    setLoading(true)
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      // demo fallback
+      setUser({ email })
+      const r = email.includes('coach') ? 'coach' : 'client'
+      setRole(r); setView(r)
+    } else {
+      setUser(data.user)
+      const { data: prof } = await supabase.from('profiles').select('role').eq('id', data.user!.id).single()
+      const r = prof?.role || (email.includes('coach') ? 'coach' : 'client')
+      setRole(r); setView(r)
+    }
     setLoading(false)
   }
 
-  const loadData = async () => {
-    const { data: lib } = await supabase.from('exercise_library').select('*').order('name')
-    if(lib) setLibrary(lib)
-    const { data: profs } = await supabase.from('profiles').select('*').order('created_at',{ascending:false}).limit(50)
-    if(profs) setClients(profs)
-    const { data: checks } = await supabase.from('check_ins').select('*').order('created_at',{ascending:false}).limit(20)
-    if(checks) setCheckins(checks)
-  }
-
-  const handleLogin = async () => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if(error) alert(error.message)
-    else { setUser(data.user); await loadData() }
-  }
-
-  const handleLogout = async () => { await supabase.auth.signOut(); setUser(null) }
-
-  if(loading) return <div className="min-h-screen bg-[#080808] flex items-center justify-center text-white/40 text-sm">Loading RAFIT...</div>
-
-  if(!user){
-    return (
-      <div className="min-h-screen bg-[#080808] text-white flex items-center justify-center p-6">
-        <div className="w-full max-w-sm">
-          <h1 className="text- leading-[0.9] font-serif">RAFIT<br/><span className="text-[#FF4D8D] italic">ULTRA</span></h1>
-          <div className="space-y-3 mt-8">
-            <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" className="w-full h- rounded- bg-[#121212] border border-white/10 px-5 text-"/>
-            <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Password" className="w-full h- rounded- bg-[#121212] border border-white/10 px-5 text-"/>
-            <button onClick={handleLogin} className="w-full h- rounded-full bg-[#FF4D8D] text-black font-bold text-">LOGIN</button>
-          </div>
-        </div>
+  if (view === 'login') return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-[#080808]">
+      <div className="w-full max-w-sm glass rounded-3xl p-6">
+        <div className="anton text-2xl mb-6">RAFIT • RAPHI</div>
+        <input className="w-full bg-white/5 border border-white/10 rounded-full px-4 py-3 text-sm mb-3" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+        <input className="w-full bg-white/5 border border-white/10 rounded-full px-4 py-3 text-sm mb-4" type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} />
+        <button onClick={handleLogin} className="w-full bg-[#FF4D8D] text-black rounded-full py-3 font-bold">{loading?'...':'ACCEDI'}</button>
+        <div className="text-[11px] opacity-40 text-center mt-3">coach@rafit.com / client@test.com : 123456</div>
       </div>
-    )
+    </div>
+  )
+  if (view === 'coach') return <CoachView user={user} setView={setView} />
+  return <ClientView user={user} setView={setView} />
+}
+
+function CoachView({ user, setView }: any) {
+  const [tab, setTab] = useState('clients')
+  const [plans, setPlans] = useState<any[]>([])
+  const [clients, setClients] = useState<any[]>([])
+  // builder state
+  const [planName, setPlanName] = useState('')
+  const [goal, setGoal] = useState('TONIFICAZIONE BIKINI')
+  const [selectedClient, setSelectedClient] = useState('')
+  const [days, setDays] = useState<any[]>([{ day_number: 1, day_name: 'GLUTEI FOCUS', exercises: [{ name: 'Hip Thrust', sets: 4, reps: '12', tempo: '2-1-2-0', rest: '90s' }] }])
+
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  const fetchData = async () => {
+    const { data: c } = await supabase.from('profiles').select('*').eq('role','client')
+    if (c) setClients(c)
+    const { data: p } = await supabase.from('workout_plans').select('*, profiles!workout_plans_client_id_fkey(email)').order('created_at',{ascending:false})
+    if (p) setPlans(p)
+  }
+
+  const savePlan = async () => {
+    if (!planName || !selectedClient) return alert('Nome piano + cliente richiesti')
+    // 1. plan
+    const { data: plan, error } = await supabase.from('workout_plans').insert({ coach_id: user.id, client_id: selectedClient, name: planName, goal_tag: goal }).select().single()
+    if (error) return alert(error.message)
+    // 2. days + exercises
+    for (const d of days) {
+      const { data: day } = await supabase.from('workout_days').insert({ plan_id: plan.id, day_number: d.day_number, day_name: d.day_name }).select().single()
+      for (const ex of d.exercises) {
+        await supabase.from('exercises').insert({ day_id: day.id, name: ex.name, sets: ex.sets, reps: ex.reps, tempo: ex.tempo, rest: ex.rest })
+      }
+    }
+    alert('Piano salvato! Cliente lo vedrà')
+    setPlanName(''); fetchData()
   }
 
   return (
-    <div className="min-h-screen bg-[#080808] text-white">
-      <div className="sticky top-0 z-40 bg-[#080808]/80 backdrop-blur-xl border-b border-white/[0.06]">
-        <div className="max-w- mx-auto px-4 md:px-6 h- flex items-center justify-between">
-          <h1 className="text- font-serif">RAFIT</h1>
-          <div className="flex gap-2">
-            <button onClick={()=>setView('home')} className={`h- px-4 rounded-full text- font-bold ${view==='home'?'bg-white text-black':'bg-[#1E1E1E] text-white/60'}`}>HOME</button>
-            <button onClick={()=>setView('builder')} className={`h- px-4 rounded-full text- font-bold ${view==='builder'?'bg-white text-black':'bg-[#1E1E1E] text-white/60'}`}>BUILDER</button>
-            <button onClick={()=>setView('checkin')} className={`h- px-4 rounded-full text- font-bold ${view==='checkin'?'bg-white text-black':'bg-[#1E1E1E] text-white/60'}`}>CHECK-IN</button>
-            <button onClick={handleLogout} className="h- px-4 rounded-full bg-[#1E1E1E] border border-white/10 text-">LOGOUT</button>
+    <div className="min-h-screen pb-20 bg-[#080808]">
+      <header className="sticky top-0 bg-black/80 backdrop-blur border-b border-white/10 p-4 flex justify-between">
+        <div className="anton">RAFIT COACH - {user?.email}</div>
+        <button onClick={()=>{ supabase.auth.signOut(); setView('login')}} className="text-xs opacity-60">Logout</button>
+      </header>
+      <nav className="flex gap-2 p-4 overflow-x-auto">
+        {['clients','builder','plans'].map(t=>(
+          <button key={t} onClick={()=>setTab(t)} className={`px-4 py-2 rounded-full text-xs font-bold ${tab===t ? 'bg-white text-black' : 'glass'}`}>{t.toUpperCase()}</button>
+        ))}
+      </nav>
+      <div className="p-4">
+        {tab==='clients' && (
+          <div>
+            <h2 className="anton text-3xl">CLIENTI REALI DA SUPABASE</h2>
+            <div className="mt-4 space-y-3">
+              {clients.map((c:any)=>(
+                <div key={c.id} className="glass rounded-2xl p-4 flex justify-between">
+                  <div><div className="font-bold">{c.full_name || c.email}</div><div className="text-xs opacity-60">{c.email}</div></div>
+                  <div className="text-xs bg-[#FF4D8D] text-black px-2 py-1 rounded-full h-fit">{c.role}</div>
+                </div>
+              ))}
+              {clients.length===0 && <div className="opacity-50 text-sm">Nessuna cliente - registra una client@test.com</div>}
+            </div>
           </div>
-        </div>
-      </div>
-
-      <div className="max-w- mx-auto px-4 md:px-6 py-6">
-        {view==='home' && <ClientApp user={user} setVideoModal={setVideoModal} setToast={setToast} />}
-        {view==='builder' && <CoachBuilder user={user} clients={clients} library={library} days={days} setDays={setDays} activeDayIdx={activeDayIdx} setActiveDayIdx={setActiveDayIdx} planName={planName} setPlanName={setPlanName} selectedClient={selectedClient} setSelectedClient={setSelectedClient} goal={goal} setGoal={setGoal} setToast={setToast} setVideoModal={setVideoModal} loadData={loadData} />}
-        {view==='checkin' && (
-          <div className="grid lg:grid-cols-2 gap-6">
-            <div className="bg-[#121212] rounded- border border-white/10 p-5"><WeightChart data={checkins} /></div>
-            <div className="bg-[#121212] rounded- border border-white/10 p-5"><BeforeAfterSlider /></div>
+        )}
+        {tab==='builder' && (
+          <div>
+            <h2 className="anton text-3xl">WORKOUT BUILDER REAL</h2>
+            <div className="mt-4 glass rounded-2xl p-4 space-y-3">
+              <input value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Nome: Sara - Bikini 4x" className="w-full bg-white/5 border border-white/10 rounded-full px-4 py-2 text-sm" />
+              <div className="grid grid-cols-2 gap-2">
+                <select value={goal} onChange={e=>setGoal(e.target.value)} className="bg-white/5 border border-white/10 rounded-full px-4 py-2 text-sm">
+                  <option>TONIFICAZIONE BIKINI</option><option>DIMAGRIMENTO</option><option>RICOMPOSIZIONE</option><option>GARA</option>
+                </select>
+                <select value={selectedClient} onChange={e=>setSelectedClient(e.target.value)} className="bg-white/5 border border-white/10 rounded-full px-4 py-2 text-sm">
+                  <option value="">Seleziona cliente</option>
+                  {clients.map((c:any)=><option key={c.id} value={c.id}>{c.email}</option>)}
+                </select>
+              </div>
+              {days.map((d,i)=>(
+                <div key={i} className="border-t border-white/10 pt-3">
+                  <div className="flex gap-2">
+                    <input value={d.day_name} onChange={e=>{ const nd=[...days]; nd[i].day_name=e.target.value; setDays(nd)}} className="flex-1 bg-white/5 rounded-full px-3 py-2 text-xs font-bold" />
+                    <span className="text-xs opacity-60 py-2">Day {d.day_number}</span>
+                  </div>
+                  {d.exercises.map((ex:any, ei:number)=>(
+                    <div key={ei} className="mt-2 flex gap-1">
+                      <input value={ex.name} onChange={e=>{ const nd=[...days]; nd[i].exercises[ei].name=e.target.value; setDays(nd)}} className="flex-1 bg-black border border-white/10 rounded-full px-3 py-2 text-xs" placeholder="Esercizio" />
+                      <input value={ex.sets} onChange={e=>{ const nd=[...days]; nd[i].exercises[ei].sets=parseInt(e.target.value)||0; setDays(nd)}} className="w-12 bg-black border border-white/10 rounded-full px-2 py-2 text-xs" placeholder="Sets" />
+                      <input value={ex.reps} onChange={e=>{ const nd=[...days]; nd[i].exercises[ei].reps=e.target.value; setDays(nd)}} className="w-16 bg-black border border-white/10 rounded-full px-2 py-2 text-xs" placeholder="Reps" />
+                    </div>
+                  ))}
+                  <button onClick={()=>{ const nd=[...days]; nd[i].exercises.push({name:'',sets:3,reps:'10',tempo:'2-0-2-0',rest:'60s'}); setDays(nd)}} className="mt-2 text-xs border border-white/20 rounded-full px-3 py-1">+ Esercizio</button>
+                </div>
+              ))}
+              <button onClick={()=>setDays([...days,{day_number:days.length+1, day_name:`DAY ${days.length+1}`, exercises:[] }])} className="w-full mt-2 border border-white/20 rounded-full py-2 text-xs">+ Aggiungi Giorno</button>
+              <button onClick={savePlan} className="w-full bg-[#FF4D8D] text-black rounded-full py-3 font-bold mt-4">SALVA SU SUPABASE REAL</button>
+            </div>
+          </div>
+        )}
+        {tab==='plans' && (
+          <div>
+            <h2 className="anton text-3xl">PIANI SALVATI</h2>
+            <div className="mt-4 space-y-2">
+              {plans.map((p:any)=>(
+                <div key={p.id} className="glass rounded-2xl p-4">
+                  <div className="font-bold">{p.name}</div>
+                  <div className="text-xs opacity-60">{p.goal_tag} → {p.profiles?.email || p.client_id}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
+    </div>
+  )
+}
 
-      {videoModal && <VideoModal video={videoModal} onClose={()=>setVideoModal(null)} />}
-      {toast && <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white text-black px-5 py-3 rounded-full text- font-bold z-50">{toast}</div>}
+function ClientView({ user, setView }: any) {
+  const [plans, setPlans] = useState<any[]>([])
+  const [selectedPlan, setSelectedPlan] = useState<any>(null)
+  const [days, setDays] = useState<any[]>([])
+
+  useEffect(() => { fetchPlans() }, [])
+  const fetchPlans = async () => {
+    const { data } = await supabase.from('workout_plans').select('*').eq('client_id', user.id).order('created_at',{ascending:false})
+    if (data) setPlans(data)
+  }
+  const openPlan = async (p:any) => {
+    setSelectedPlan(p)
+    const { data: d } = await supabase.from('workout_days').select('*, exercises(*)').eq('plan_id', p.id).order('day_number')
+    if (d) setDays(d)
+  }
+
+  return (
+    <div className="min-h-screen pb-20 bg-[#080808]">
+      <header className="p-4 flex justify-between border-b border-white/10"><div className="anton">CIAO {user?.email}</div><button onClick={()=>{supabase.auth.signOut(); setView('login')}} className="text-xs opacity-60">Logout</button></header>
+      <div className="p-4">
+        {!selectedPlan ? (
+          <>
+            <h2 className="anton text-2xl">I TUOI PIANI REALI</h2>
+            <div className="mt-4 space-y-3">
+              {plans.map((p:any)=>(
+                <button key={p.id} onClick={()=>openPlan(p)} className="w-full text-left glass rounded-2xl p-4">
+                  <div className="font-bold">{p.name}</div><div className="text-xs opacity-60">{p.goal_tag}</div>
+                </button>
+              ))}
+              {plans.length===0 && <div className="opacity-50 text-sm">Nessun piano assegnato - chiedi a Raphaela</div>}
+            </div>
+          </>
+        ) : (
+          <>
+            <button onClick={()=>setSelectedPlan(null)} className="text-xs opacity-60 mb-4">← Indietro</button>
+            <h2 className="anton text-2xl">{selectedPlan.name}</h2>
+            <div className="mt-4 space-y-4">
+              {days.map((d:any)=>(
+                <div key={d.id} className="glass rounded-2xl p-4">
+                  <div className="font-bold text-sm">DAY {d.day_number} - {d.day_name}</div>
+                  {d.exercises?.map((ex:any)=>(
+                    <div key={ex.id} className="mt-3 bg-white/5 rounded-xl p-3 text-xs">
+                      <div className="font-bold">{ex.name}</div>
+                      <div className="opacity-60">{ex.sets}x{ex.reps} • {ex.tempo} • Rest {ex.rest}</div>
+                      <div className="mt-2 grid grid-cols-3 gap-2">
+                        <input placeholder="kg" className="bg-black border border-white/10 rounded-full px-2 py-1 text-xs" />
+                        <input placeholder="reps" className="bg-black border border-white/10 rounded-full px-2 py-1 text-xs" />
+                        <button onClick={()=>alert('Log salvato!')} className="bg-[#FF4D8D] text-black rounded-full text-xs">Log</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
