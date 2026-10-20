@@ -1,55 +1,160 @@
 'use client'
-import { useState } from 'react';
-import { Play } from 'lucide-react';
+import { useState, useEffect } from 'react'
+import { Play, Check, TrendingUp } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 
-export function ClientApp({ user, myPlans, myDays, clientActiveDay, setClientActiveDay, setVideoModal }: any){
-  const [clientTab,setClientTab]=useState('home');
-  const clientExercises = myDays[clientActiveDay]?.exercises || [];
+export default function ClientApp({ user, setVideoModal, setToast }: any) {
+  const [plans, setPlans] = useState<any[]>([])
+  const [activePlan, setActivePlan] = useState<any>(null)
+  const [days, setDays] = useState<any[]>([])
+  const [activeDayIdx, setActiveDayIdx] = useState(0)
+  const [completed, setCompleted] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!user?.id) return
+    loadClientPlans()
+  }, [user?.id])
+
+  const loadClientPlans = async () => {
+    setLoading(true)
+    // Get plans where client_id = user.id OR user_id = user.id (covers both schemas)
+    let { data: plansData } = await supabase.from('workout_plans').select('*').eq('client_id', user.id).order('created_at', { ascending: false })
+    if (!plansData?.length) {
+      const { data: byUserId } = await supabase.from('workout_plans').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
+      plansData = byUserId || []
+    }
+    if (!plansData?.length) {
+      const { data: byProfile } = await supabase.from('workout_plans').select('*').eq('profile_id', user.id).order('created_at', { ascending: false })
+      plansData = byProfile || []
+    }
+    
+    setPlans(plansData || [])
+    if (plansData && plansData.length > 0) {
+      setActivePlan(plansData[0])
+      await loadDays(plansData[0].id)
+    }
+    setLoading(false)
+  }
+
+  const loadDays = async (planId: string) => {
+    const { data: daysData } = await supabase.from('workout_days').select('*, exercises(*)').eq('plan_id', planId).order('day_number')
+    if (daysData) {
+      // Also try with workout_plan_id if plan_id fails
+      if (daysData.length === 0) {
+        const { data: altDays } = await supabase.from('workout_days').select('*, exercises(*)').eq('workout_plan_id', planId).order('day_number')
+        setDays(altDays || [])
+      } else {
+        setDays(daysData)
+      }
+    }
+  }
+
+  const toggleComplete = (exId: string) => {
+    const next = new Set(completed)
+    if (next.has(exId)) next.delete(exId)
+    else next.add(exId)
+    setCompleted(next)
+  }
+
+  const logWorkout = async () => {
+    if (!activePlan) return
+    // Save to workout_logs + exercise_logs if you have them
+    await supabase.from('workout_logs').insert({ plan_id: activePlan.id, user_id: user.id, day_number: days[activeDayIdx]?.day_number }).catch(()=>{})
+    setToast(`Day ${activeDayIdx+1} logged! 🔥`)
+    setTimeout(()=>setToast(null), 3000)
+  }
+
+  if (loading) return <div className="min-h- flex items-center justify-center text-white/40 text-sm">Loading your program...</div>
+
+  if (plans.length === 0) {
+    return (
+      <div className="min-h- flex flex-col items-center justify-center p-6">
+        <div className="w-16 h-16 rounded-full bg-[#1E1E1E] flex items-center justify-center mb-4 text-2xl">🏋️</div>
+        <h3 className="text- font-semibold">Nessun piano ancora</h3>
+        <p className="text- text-white/40 mt-1 text-center max-w-">Il tuo coach non ti ha ancora assegnato un programma. Contattalo.</p>
+        <p className="text- text-white/20 mt-4 font-mono">user: {user.id.slice(0,8)}</p>
+      </div>
+    )
+  }
+
+  const activeDay = days[activeDayIdx]
+  const dayExercises = activeDay?.exercises || []
 
   return (
-    <div className="space-y-6">
-      <div className="flex gap-2 mb-4">
-        {[{k:'home',label:'HOME REAL FULL'},{k:'workout',label:'WORKOUT REAL FULL CLIENT'},{k:'profile',label:'PROFILE'}].map(t=><button key={t.k} onClick={()=>setClientTab(t.k)} className={`px-4 py-2 rounded-full text-[11px] ${clientTab===t.k?'bg-white text-black':'bg-white/5 border border-white/10'}`}>{t.label}</button>)}
+    <div className="w-full space-y-5 pb-24">
+      {/* HEADER */}
+      <div className="flex items-end justify-between">
+        <div>
+          <h2 className="serif text- md:text- leading-[0.9]">YOUR<br/><span className="text-[#FF4D8D] italic">PROGRAM</span></h2>
+          <p className="text- text-white/40 mt-2">{activePlan?.name} • {activePlan?.goal_tag || 'Focus'}</p>
+        </div>
+        <div className="text-right">
+          <div className="text- text-white/40">PROGRESS</div>
+          <div className="text- font-bold">{completed.size}/{dayExercises.length}</div>
+        </div>
       </div>
 
-      {clientTab==='home'&&(
-        <div className="space-y-6">
-          <div className="bg-[#121212] rounded-[32px] border border-white/10 p-7">
-            <p className="text-[11px] tracking-[0.3em] text-[#FF4D8D]">CIAO, {(user?.email||'CLIENT').split('@')[0].toUpperCase()} • REAL CLIENT FULL</p>
-            <h2 className="serif text-[48px] leading-[0.85] mt-3">YOUR<br/>TRANSFORMATION<br/><span className="italic text-[#FF4D8D]">IS LOADING.</span></h2>
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <div className="bg-[#080808] border border-white/10 rounded-[20px] p-4"><p className="text-[10px] text-white/40">PIANI REAL CLIENT FULL</p><p className="text-[22px] font-bold mt-1">{myPlans.length} 🔥</p></div>
-              <div className="bg-[#FF4D8D] rounded-[20px] p-4 text-black"><p className="text-[10px] font-bold">GIORNI REAL CLIENT FULL</p><p className="text-[22px] font-bold mt-1">{myDays.length} REAL</p></div>
-            </div>
-          </div>
-          <div className="bg-[#121212] rounded-[32px] border border-white/10 p-6">
-            <h3 className="text-[14px] font-bold mb-3">I TUOI PIANI REAL CLIENT FULL ({myPlans.length}) - LUXURY RESTORED</h3>
-            {myPlans.length===0?<p className="text-white/40 text-[13px]">Nessun piano assegnato - coach deve assegnare piano REAL con giorni</p>:myPlans.map((p:any)=><div key={p.id} className="bg-[#080808] border border-white/10 rounded-[16px] p-4 mb-2"><p className="font-bold text-[14px]">{p.name} REAL CLIENT FULL</p><p className="text-[11px] text-white/40">{myDays.length} giorni • {myDays.reduce((a:any,d:any)=>a+d.exercises.length,0)} esercizi REAL CLIENT FULL</p></div>)}
-          </div>
+      {/* PLAN SELECTOR if multiple */}
+      {plans.length > 1 && (
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          {plans.map((p:any)=>(
+            <button key={p.id} onClick={async()=>{setActivePlan(p); await loadDays(p.id); setActiveDayIdx(0); setCompleted(new Set())}} className={`shrink-0 h- px-4 rounded-full text- font-medium border ${activePlan?.id===p.id?'bg-white text-black border-white':'bg-[#1E1E1E] border-white/10 text-white/70'}`}>{p.name}</button>
+          ))}
         </div>
       )}
 
-      {clientTab==='workout'&&(
-        <div className="space-y-6">
-          <h2 className="serif text-[42px] leading-[0.9]">WORKOUT<br/><span className="text-[#FF4D8D] italic">REAL CLIENT FULL</span></h2>
-          {myDays.length===0?(
-            <div className="bg-[#121212] rounded-[32px] border border-white/10 p-12 text-center"><p className="text-white/40">Nessun piano REAL CLIENT FULL - coach deve creare piano multi-day REAL</p><p className="text-[11px] text-white/20 mt-2">myPlans: {myPlans.length}, myDays: {myDays.length} - REAL CLIENT FULL NOW RESTORED</p></div>
-          ):(
-            <>
-              <div className="bg-[#121212] rounded-[28px] border border-white/10 p-4"><div className="flex gap-2 overflow-x-auto pb-1">{myDays.map((d:any,i:number)=><button key={d.tempId} onClick={()=>setClientActiveDay(i)} className={`h-[44px] px-5 rounded-full text-[12px] font-medium whitespace-nowrap ${i===clientActiveDay?'bg-white text-black':'bg-[#1E1E1E] border border-white/10 text-white/60'}`}>{d.day_name} • {d.exercises.length} ex REAL CLIENT FULL</button>)}</div></div>
-              <div className="bg-[#121212] rounded-[32px] border border-white/10 p-5 md:p-7">
-                <div className="flex items-center gap-3 mb-6"><div className="w-10 h-10 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center font-bold text-[13px]">{myDays[clientActiveDay]?.day_number}</div><div><h3 className="text-[18px] font-medium">{myDays[clientActiveDay]?.day_name}</h3><p className="text-[11px] tracking-[0.15em] text-white/40">{clientExercises.length} EXERCISES • REAL SUPABASE • FULL LUXURY CLIENT RESTORED</p></div></div>
-                <div className="space-y-3">{clientExercises.map((ex:any,idx:number)=><div key={ex.id||idx} className="group bg-[#080808] border border-white/[0.06] rounded-[20px] p-4 md:p-5 flex gap-4"><div className="w-8 h-8 rounded-full bg-[#1E1E1E] flex items-center justify-center text-[11px]">{String(idx+1).padStart(2,'0')}</div><div className="flex-1"><div className="flex justify-between gap-3"><p className="font-medium text-[15px]">{ex.name} REAL CLIENT FULL LUXURY</p><button onClick={()=>setVideoModal(ex)} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:bg-[#FF4D8D]"><Play className="w-3.5 h-3.5 ml-[1px]"/></button></div><p className="text-[11px] text-white/40 mt-1">{ex.sets}x{ex.reps} • {ex.rest} • REAL SUPABASE CLIENT FULL</p></div></div>)}</div>
+      {/* DAY TABS */}
+      <div className="bg-[#121212] rounded- border border-white/[0.08] p-3">
+        <div className="flex gap-2 overflow-x-auto scrollbar-none">
+          {days.map((d:any,i:number)=>(
+            <button key={d.id || i} onClick={()=>{setActiveDayIdx(i); setCompleted(new Set())}} className={`shrink-0 h- px-5 rounded-full text- font-bold tracking-wide whitespace-nowrap transition ${i===activeDayIdx?'bg-[#FF4D8D] text-black':'bg-[#1E1E1E] border border-white/10 text-white/60'}`}>
+              DAY {d.day_number} • {d.day_name?.split('-')[0] || d.focus || ''}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* EXERCISES */}
+      <div className="bg-[#121212] rounded- border border-white/[0.08] p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text- font-bold tracking-wide">{activeDay?.day_name || `DAY ${activeDayIdx+1}`} • {dayExercises.length} EX</h3>
+          <button onClick={logWorkout} className="h- px-5 rounded-full bg-white text-black text- font-bold flex items-center gap-1.5"><Check className="w-3.5 h-3.5"/> COMPLETE DAY</button>
+        </div>
+
+        <div className="space-y-3">
+          {dayExercises.map((ex:any)=> {
+            const isDone = completed.has(ex.id)
+            return (
+              <div key={ex.id} className={`border rounded- p-3.5 flex gap-3 items-center transition ${isDone?'bg-[#FF4D8D]/10 border-[#FF4D8D]/30':'bg-[#080808] border-white/[0.06]'}`}>
+                <button onClick={()=>toggleComplete(ex.id)} className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border transition ${isDone?'bg-[#FF4D8D] border-[#FF4D8D] text-black':'bg-[#1E1E1E] border-white/10 text-white/30'}`}>
+                  <Check className="w-4 h-4"/>
+                </button>
+                <div className="flex-1 min-w-0">
+                  <div className={`text- font-medium truncate ${isDone?'line-through text-white/50':''}`}>{ex.name}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text- bg-white/10 px-2 py-0.5 rounded-full">{ex.sets} x {ex.reps}</span>
+                    <span className="text- text-white/30">{ex.rest || '90s'} rest</span>
+                  </div>
+                </div>
+                {ex.video_url && (
+                  <button onClick={()=>setVideoModal(ex)} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center shrink-0"><Play className="w-3.5 h-3.5 fill-black"/></button>
+                )}
               </div>
-            </>
-          )}
+            )
+          })}
+          {dayExercises.length===0 && <div className="py-12 text-center text-xs text-white/30 border border-dashed border-white/10 rounded-">No exercises for this day</div>}
         </div>
-      )}
+      </div>
 
-      {clientTab==='profile'&&(
-        <div className="bg-[#121212] rounded-[32px] border border-white/10 p-8 max-w-[560px]"><div className="w-20 h-20 rounded-full bg-[#FF4D8D] text-black flex items-center justify-center text-[24px] font-bold">{user?.email?.slice(0,2).toUpperCase()}</div><h3 className="serif text-[32px] mt-4">{user?.email}</h3><p className="text-[12px] text-white/40 mt-2">CLIENT REAL FULL • {myPlans.length} piani • {myDays.length} giorni • {myDays.reduce((a:any,d:any)=>a+d.exercises.length,0)} esercizi REAL CLIENT FULL LUXURY RESTORED</p></div>
-      )}
+      {/* QUICK CHECK IN LINK */}
+      <div className="bg-gradient-to-br from-[#FF4D8D]/20 to-[#FF4D8D]/5 border border-[#FF4D8D]/20 rounded- p-4 flex items-center justify-between">
+        <div>
+          <div className="text- font-bold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-[#FF4D8D]"/> Check-in settimanale</div>
+          <div className="text- text-white/50 mt-1">Peso, foto, misure</div>
+        </div>
+        <div className="text- bg-[#FF4D8D] text-black px-4 py-2 rounded-full font-bold">Vai →</div>
+      </div>
     </div>
   )
 }
