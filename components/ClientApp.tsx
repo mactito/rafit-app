@@ -18,7 +18,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
 
   const loadClientPlans = async () => {
     setLoading(true)
-    // Get plans where client_id = user.id OR user_id = user.id (covers both schemas)
     let { data: plansData } = await supabase.from('workout_plans').select('*').eq('client_id', user.id).order('created_at', { ascending: false })
     if (!plansData?.length) {
       const { data: byUserId } = await supabase.from('workout_plans').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
@@ -40,7 +39,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
   const loadDays = async (planId: string) => {
     const { data: daysData } = await supabase.from('workout_days').select('*, exercises(*)').eq('plan_id', planId).order('day_number')
     if (daysData) {
-      // Also try with workout_plan_id if plan_id fails
       if (daysData.length === 0) {
         const { data: altDays } = await supabase.from('workout_days').select('*, exercises(*)').eq('workout_plan_id', planId).order('day_number')
         setDays(altDays || [])
@@ -59,8 +57,9 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
 
   const logWorkout = async () => {
     if (!activePlan) return
-    // Save to workout_logs + exercise_logs if you have them
-    await supabase.from('workout_logs').insert({ plan_id: activePlan.id, user_id: user.id, day_number: days[activeDayIdx]?.day_number }).catch(()=>{})
+    try {
+      await supabase.from('workout_logs').insert({ plan_id: activePlan.id, user_id: user.id, day_number: days[activeDayIdx]?.day_number })
+    } catch {}
     setToast(`Day ${activeDayIdx+1} logged! 🔥`)
     setTimeout(()=>setToast(null), 3000)
   }
@@ -83,7 +82,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
 
   return (
     <div className="w-full space-y-5 pb-24">
-      {/* HEADER */}
       <div className="flex items-end justify-between">
         <div>
           <h2 className="serif text- md:text- leading-[0.9]">YOUR<br/><span className="text-[#FF4D8D] italic">PROGRAM</span></h2>
@@ -95,7 +93,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
         </div>
       </div>
 
-      {/* PLAN SELECTOR if multiple */}
       {plans.length > 1 && (
         <div className="flex gap-2 overflow-x-auto pb-2">
           {plans.map((p:any)=>(
@@ -104,7 +101,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
         </div>
       )}
 
-      {/* DAY TABS */}
       <div className="bg-[#121212] rounded- border border-white/[0.08] p-3">
         <div className="flex gap-2 overflow-x-auto scrollbar-none">
           {days.map((d:any,i:number)=>(
@@ -115,7 +111,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
         </div>
       </div>
 
-      {/* EXERCISES */}
       <div className="bg-[#121212] rounded- border border-white/[0.08] p-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text- font-bold tracking-wide">{activeDay?.day_name || `DAY ${activeDayIdx+1}`} • {dayExercises.length} EX</h3>
@@ -147,7 +142,6 @@ export default function ClientApp({ user, setVideoModal, setToast }: any) {
         </div>
       </div>
 
-      {/* QUICK CHECK IN LINK */}
       <div className="bg-gradient-to-br from-[#FF4D8D]/20 to-[#FF4D8D]/5 border border-[#FF4D8D]/20 rounded- p-4 flex items-center justify-between">
         <div>
           <div className="text- font-bold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-[#FF4D8D]"/> Check-in settimanale</div>
